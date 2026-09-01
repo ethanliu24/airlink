@@ -7,6 +7,7 @@ import (
 	"net"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,12 +29,13 @@ func TestNewP2PNode(t *testing.T) {
 	t.Parallel()
 
 	t.Run("success", func(t *testing.T) {
-		addr, err := toUDPAddress(NODE_TEST_IP, 0)
+		addr, err := toUDPAddress(NODE_TEST_IP, 1234)
 		require.NoError(t, err)
 
 		node, err := NewP2PNode(addr, mockListen)
 		require.NoError(t, err)
 		require.NotNil(t, node.transport)
+		assert.Equal(t, fmt.Sprintf("%s:1234", NODE_TEST_IP), node.addr.String())
 
 		t.Cleanup(func() {
 			node.Cleanup()
