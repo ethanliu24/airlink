@@ -14,6 +14,10 @@ type P2PNode struct {
 	transport *quic.Transport
 }
 
+func (n *P2PNode) Cleanup() {
+	defer n.transport.Close()
+}
+
 func toUDPAddress(port int) (*net.UDPAddr, error) {
 	address := fmt.Sprintf("%s:%d", IP_ADDRESS, port)
     return net.ResolveUDPAddr("udp", address)
