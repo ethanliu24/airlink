@@ -1,9 +1,8 @@
 package node
 
 import (
-	"fmt"
-	"net"
 	"log/slog"
+	"net"
 
 	"github.com/quic-go/quic-go"
 )
@@ -18,19 +17,10 @@ func (n *P2PNode) Cleanup() {
 	defer n.transport.Close()
 }
 
-func toUDPAddress(port int) (*net.UDPAddr, error) {
-	address := fmt.Sprintf("%s:%d", IP_ADDRESS, port)
-    return net.ResolveUDPAddr("udp", address)
-}
+type UDPListenFunc func(network string, address *net.UDPAddr) (*net.UDPConn, error)
 
-func NewP2PNode(port int) (*P2PNode, error) {
-	addr, err := toUDPAddress(port)
-	if err != nil {
-		slog.Error("could not resolve UDP to address", "port", port, "err", err)
-		return nil, err
-	}
-
-	udpConn, err := net.ListenUDP("udp", addr)
+func NewP2PNode(addr *net.UDPAddr, listen UDPListenFunc) (*P2PNode, error) {
+	udpConn, err := listen(addr.Network(), addr)
 	if err != nil {
 		slog.Error("could not listen on UDP address", "address", addr, "err", err)
 		return nil, err
