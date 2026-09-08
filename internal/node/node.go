@@ -9,12 +9,14 @@ import (
 
 const IP_ADDRESS = "127.0.0.1"
 
+// TODO transport cleanup
 type P2PNode struct {
 	transport *quic.Transport
 	sender    *Sender
 	addr      net.Addr
 }
 
+// TODO sender.Close()
 func (n *P2PNode) Cleanup() {
 	defer n.transport.Close()
 }
