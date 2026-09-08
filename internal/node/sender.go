@@ -11,6 +11,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+var MAX_HANDSHAKE_TIMEOUT_SECONDS = 3 * time.Second
 var ErrorSenderConnectionInitialization = fmt.Errorf("sender stream write failed")
 
 type Sender struct {
@@ -46,10 +47,10 @@ func send(conn *quic.Conn, data []byte) {
 // TODO figure out sending multiple data to the same address, maybe cache it in map[*netUDPAddr]*quic.Conn
 func (s *Sender) Send(recieverAddr *net.UDPAddr, data []byte) error {
 	// TODO refactor constants to config
-	ctx, cancel := context.WithTimeout(context.Background(), 3 * time.Second) // 3s handshake timeout
+	ctx, cancel := context.WithTimeout(context.Background(), MAX_HANDSHAKE_TIMEOUT_SECONDS)
 	defer cancel()
 
-	conn, err := s.transport.Dial(ctx, recieverAddr, tlsConfig, quicConfig)
+	conn, err := s.transport.Dial(ctx, recieverAddr, generateTLSConfig(), getQuicConfig())
 	if err != nil {
 		return ErrorSenderConnectionInitialization
 	}
