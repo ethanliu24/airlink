@@ -3,12 +3,15 @@ package node
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"time"
 
 	"github.com/quic-go/quic-go"
 )
+
+var ErrorSenderConnectionInitialization = fmt.Errorf("sender stream write failed")
 
 type Sender struct {
 	transport *quic.Transport
@@ -48,8 +51,7 @@ func (s *Sender) Send(recieverAddr *net.UDPAddr, data []byte) error {
 
 	conn, err := s.transport.Dial(ctx, recieverAddr, tlsConfig, quicConfig)
 	if err != nil {
-		slog.Error("cannot initiate a connection", "err", err)
-		return err
+		return ErrorSenderConnectionInitialization
 	}
 
 	defer conn.CloseWithError(0x0, "sender connection closed gracefully")
