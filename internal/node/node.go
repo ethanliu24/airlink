@@ -11,14 +11,13 @@ const IP_ADDRESS = "127.0.0.1"
 
 // TODO transport cleanup
 type P2PNode struct {
-	transport *quic.Transport
-	sender    *Sender
+	Sender    *Sender
 	addr      net.Addr
 }
 
-// TODO sender.Close()
 func (n *P2PNode) Cleanup() {
-	defer n.transport.Close()
+	// TODO n.Sender.Close() close all currently open connections
+	// defer n.transport.Close()
 }
 
 type UDPListenFunc func(network string, address *net.UDPAddr) (*net.UDPConn, error)
@@ -34,8 +33,7 @@ func NewP2PNode(addr *net.UDPAddr, listen UDPListenFunc) (*P2PNode, error) {
 	sender := NewSender(transport)
 
 	return &P2PNode{
-		transport: transport,
-		sender:    sender,
+		Sender:    sender,
 		addr:      addr,
 	}, nil
 }
