@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"time"
@@ -12,7 +11,6 @@ import (
 )
 
 var MAX_HANDSHAKE_TIMEOUT_SECONDS = 3 * time.Second
-var ErrorSenderConnectionInitialization = fmt.Errorf("sender stream write failed")
 
 type Sender struct {
 	transport *quic.Transport
@@ -52,7 +50,7 @@ func (s *Sender) Send(recieverAddr *net.UDPAddr, data []byte) error {
 
 	conn, err := s.transport.Dial(ctx, recieverAddr, generateTLSConfig(), getQuicConfig())
 	if err != nil {
-		return ErrorSenderConnectionInitialization
+		return err
 	}
 
 	defer conn.CloseWithError(0x0, "sender connection closed gracefully")
@@ -61,7 +59,7 @@ func (s *Sender) Send(recieverAddr *net.UDPAddr, data []byte) error {
 	return nil
 }
 
-func NewSender(transport *quic.Transport) *Sender {
+func newSender(transport *quic.Transport) *Sender {
 	return &Sender{
 		transport: transport,
 	}

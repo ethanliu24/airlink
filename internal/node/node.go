@@ -30,7 +30,7 @@ func NewP2PNode(addr *net.UDPAddr, listen UDPListenFunc) (*P2PNode, error) {
 	}
 
 	transport := &quic.Transport{Conn: udpConn}
-	sender := NewSender(transport)
+	sender := newSender(transport)
 
 	return &P2PNode{
 		Sender:    sender,
