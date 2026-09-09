@@ -1,4 +1,4 @@
-package node
+package comms
 
 import (
 	"crypto/rand"

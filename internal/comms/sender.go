@@ -1,4 +1,4 @@
-package node
+package comms
 
 import (
 	"context"
@@ -16,7 +16,7 @@ type Sender struct {
 	transport *quic.Transport
 }
 
-func sendData(stream *quic.Stream, data []byte) {
+func sendOverStream(stream *quic.Stream, data []byte) {
 	defer stream.Close()
 
 	n, err := stream.Write(data)
@@ -28,7 +28,7 @@ func sendData(stream *quic.Stream, data []byte) {
 	slog.Error("send successful", "bytesWritten", n)
 }
 
-func send(conn *quic.Conn, data []byte) {
+func sendData(conn *quic.Conn, data []byte) {
 	stream, err := conn.OpenStream()
 	if errors.Is(err, &quic.StreamLimitReachedError{}) {
 		slog.Error("sender stream limit reached", "err", err)
@@ -38,7 +38,7 @@ func send(conn *quic.Conn, data []byte) {
 		return
 	}
 
-	go sendData(stream, data)
+	go sendOverStream(stream, data)
 }
 
 // TODO stream the data instead of loading all into memory
@@ -55,11 +55,15 @@ func (s *Sender) Send(recieverAddr *net.UDPAddr, data []byte) error {
 
 	defer conn.CloseWithError(0x0, "sender connection closed gracefully")
 
-	go send(conn, data)
+	go sendData(conn, data)
 	return nil
 }
 
-func newSender(transport *quic.Transport) *Sender {
+func (s *Sender) Cleanup() {
+	// close all currently open connections
+}
+
+func NewSender(transport *quic.Transport) *Sender {
 	return &Sender{
 		transport: transport,
 	}

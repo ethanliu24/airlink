@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net"
 
+	"airlink/internal/comms"
 	"github.com/quic-go/quic-go"
 )
 
@@ -11,13 +12,18 @@ const IP_ADDRESS = "127.0.0.1"
 
 // TODO transport cleanup
 type P2PNode struct {
-	Sender    *Sender
+	transport *quic.Transport
+	sender    *comms.Sender
 	addr      net.Addr
 }
 
+func (n *P2PNode) Send(recieverAddr *net.UDPAddr, data []byte) {
+	n.sender.Send(recieverAddr, data)
+}
+
 func (n *P2PNode) Cleanup() {
-	// TODO n.Sender.Close() close all currently open connections
-	// defer n.transport.Close()
+	defer n.sender.Cleanup()
+	defer n.transport.Close()
 }
 
 type UDPListenFunc func(network string, address *net.UDPAddr) (*net.UDPConn, error)
@@ -30,10 +36,11 @@ func NewP2PNode(addr *net.UDPAddr, listen UDPListenFunc) (*P2PNode, error) {
 	}
 
 	transport := &quic.Transport{Conn: udpConn}
-	sender := newSender(transport)
+	sender := comms.NewSender(transport)
 
 	return &P2PNode{
-		Sender:    sender,
+		transport: transport,
+		sender:    sender,
 		addr:      addr,
 	}, nil
 }
