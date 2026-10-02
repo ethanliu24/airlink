@@ -2,18 +2,22 @@ package comms
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net"
-	"time"
+	"sync"
 
 	"github.com/quic-go/quic-go"
 )
 
-var MAX_HANDSHAKE_TIMEOUT_SECONDS = 3 * time.Second
+type DialFunc func(ctx context.Context, addr net.Addr, tlsConf *tls.Config, conf *quic.Config) (*quic.Conn, error)
 
 type Sender struct {
 	transport *quic.Transport
+	dial      DialFunc
+	mu        sync.Mutex
+	conns     map[string]*quic.Conn
 }
 
 func sendOverStream(stream *quic.Stream, data []byte) {
@@ -28,7 +32,14 @@ func sendOverStream(stream *quic.Stream, data []byte) {
 	slog.Error("send successful", "bytesWritten", n)
 }
 
-func sendData(conn *quic.Conn, data []byte) {
+func sendData(s *Sender, addr string, conn *quic.Conn, data []byte) {
+	defer func() {
+		conn.CloseWithError(0x0, "sender connection closed gracefully")
+		s.mu.Lock()
+		delete(s.conns, addr)
+		s.mu.Unlock()
+	}()
+
 	stream, err := conn.OpenStream()
 	if errors.Is(err, &quic.StreamLimitReachedError{}) {
 		slog.Error("sender stream limit reached", "err", err)
@@ -48,23 +59,37 @@ func (s *Sender) Send(recieverAddr *net.UDPAddr, data []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), MAX_HANDSHAKE_TIMEOUT_SECONDS)
 	defer cancel()
 
-	conn, err := s.transport.Dial(ctx, recieverAddr, generateTLSConfig(), getQuicConfig())
+	addrStr := recieverAddr.String()
+	conn, err := s.dial(ctx, recieverAddr, generateTLSConfig(), getQuicConfig())
 	if err != nil {
 		return err
 	}
 
-	defer conn.CloseWithError(0x0, "sender connection closed gracefully")
+	// Trace connection for clean up later
+	s.mu.Lock()
+	s.conns[addrStr] = conn
+	s.mu.Unlock()
 
-	go sendData(conn, data)
+	go sendData(s, addrStr, conn, data)
 	return nil
 }
 
 func (s *Sender) Cleanup() {
-	// close all currently open connections
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for addr, conn := range s.conns {
+		_ = conn.CloseWithError(0x1, "sender tearing down")
+		delete(s.conns, addr)
+	}
 }
 
+// Caller is responsible for cleaning up transport
 func NewSender(transport *quic.Transport) *Sender {
 	return &Sender{
 		transport: transport,
+		dial:      transport.Dial,
+
+		conns:     make(map[string]*quic.Conn),
 	}
 }
