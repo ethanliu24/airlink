@@ -11,6 +11,7 @@ import (
 const IP_ADDRESS = "127.0.0.1"
 
 // TODO transport cleanup
+// TODO refactor
 type P2PNode struct {
 	transport *quic.Transport
 	sender    *comms.Sender
