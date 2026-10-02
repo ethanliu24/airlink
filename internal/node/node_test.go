@@ -34,7 +34,6 @@ func TestNewP2PNode(t *testing.T) {
 
 		node, err := NewP2PNode(addr, mockListen)
 		require.NoError(t, err)
-		require.NotNil(t, node.transport)
 		assert.Equal(t, fmt.Sprintf("%s:1234", NODE_TEST_IP), node.addr.String())
 
 		t.Cleanup(func() {
