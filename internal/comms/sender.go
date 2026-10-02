@@ -11,66 +11,74 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-type DialFunc func(ctx context.Context, addr net.Addr, tlsConf *tls.Config, conf *quic.Config) (*quic.Conn, error)
-
 type Sender struct {
-	transport *quic.Transport
-	dial      DialFunc
-	mu        sync.Mutex
-	conns     map[string]*quic.Conn
+	dial DialFunc
+
+	mu    sync.Mutex
+	conns map[string]Conn
 }
 
-func sendOverStream(stream *quic.Stream, data []byte) {
+func sendOverStream(stream Stream, data []byte) error {
 	defer stream.Close()
 
 	n, err := stream.Write(data)
 	if err != nil {
 		slog.Error("sender stream write failed", "bytesWritten", n, "err", err)
-		return
+
+		return err
 	}
 
-	slog.Error("send successful", "bytesWritten", n)
+	slog.Debug("send successful", "bytesWritten", n)
+	return nil
 }
 
-func sendData(s *Sender, addr string, conn *quic.Conn, data []byte) {
+func (s *Sender) sendData(addr string, conn Conn, data []byte) {
 	defer func() {
-		conn.CloseWithError(0x0, "sender connection closed gracefully")
+		_ = conn.CloseWithError(0, "sender connection closed gracefully")
+
 		s.mu.Lock()
-		delete(s.conns, addr)
-		s.mu.Unlock()
+		defer s.mu.Unlock()
+
+		if current, ok := s.conns[addr]; ok && current == conn {
+			delete(s.conns, addr)
+		}
 	}()
 
 	stream, err := conn.OpenStream()
-	if errors.Is(err, &quic.StreamLimitReachedError{}) {
-		slog.Error("sender stream limit reached", "err", err)
-		return
-	} else if err != nil {
-		slog.Error("sender stream open failed", "err", err)
+	if err != nil {
+		if errors.Is(err, &quic.StreamLimitReachedError{}) {
+			slog.Error("sender stream limit reached", "err", err)
+		} else {
+			slog.Error("sender stream open failed", "err", err)
+		}
+
 		return
 	}
 
-	go sendOverStream(stream, data)
+	go func() {
+		if err := sendOverStream(stream, data); err != nil {
+			slog.Error("sender failed to send data", "err", err)
+		}
+	}()
 }
 
-// TODO stream the data instead of loading all into memory
-// TODO figure out sending multiple data to the same address, maybe cache it in map[*netUDPAddr]*quic.Conn
-func (s *Sender) Send(recieverAddr *net.UDPAddr, data []byte) error {
-	// TODO refactor constants to config
+func (s *Sender) Send(receiverAddr *net.UDPAddr, data []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), MAX_HANDSHAKE_TIMEOUT_SECONDS)
 	defer cancel()
 
-	addrStr := recieverAddr.String()
-	conn, err := s.dial(ctx, recieverAddr, generateTLSConfig(), getQuicConfig())
+	addr := receiverAddr.String()
+
+	conn, err := s.dial(ctx, receiverAddr, generateTLSConfig(), getQuicConfig())
 	if err != nil {
 		return err
 	}
 
-	// Trace connection for clean up later
 	s.mu.Lock()
-	s.conns[addrStr] = conn
+	s.conns[addr] = conn
 	s.mu.Unlock()
 
-	go sendData(s, addrStr, conn, data)
+	go s.sendData(addr, conn, data)
+
 	return nil
 }
 
@@ -79,17 +87,23 @@ func (s *Sender) Cleanup() {
 	defer s.mu.Unlock()
 
 	for addr, conn := range s.conns {
-		_ = conn.CloseWithError(0x1, "sender tearing down")
+		_ = conn.CloseWithError(1, "sender tearing down")
 		delete(s.conns, addr)
 	}
 }
 
-// Caller is responsible for cleaning up transport
 func NewSender(transport *quic.Transport) *Sender {
 	return &Sender{
-		transport: transport,
-		dial:      transport.Dial,
+		dial: func(ctx context.Context, addr net.Addr, tlsConf *tls.Config, conf *quic.Config) (Conn, error) {
+			conn, err := transport.Dial(ctx, addr, tlsConf, conf)
+			if err != nil {
+				return nil, err
+			}
 
-		conns:     make(map[string]*quic.Conn),
+			return &quicConn{
+				conn: conn,
+			}, nil
+		},
+		conns: make(map[string]Conn),
 	}
 }
