@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"airlink/internal/comms"
+
 	"github.com/quic-go/quic-go"
 )
 
@@ -18,8 +19,8 @@ type P2PNode struct {
 	addr      net.Addr
 }
 
-func (n *P2PNode) Send(recieverAddr *net.UDPAddr, data []byte) {
-	n.sender.Send(recieverAddr, data)
+func (n *P2PNode) Send(receiverAddr *net.UDPAddr, data []byte) {
+	n.sender.Send(receiverAddr, data)
 }
 
 func (n *P2PNode) Cleanup() {

@@ -11,7 +11,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-type Reciever struct {
+type Receiver struct {
 	listen ListenFunc
 	conn   Conn
 }
@@ -28,7 +28,7 @@ func handleStream(stream Stream) {
 			fmt.Println()
 			break
 		} else if err != nil {
-			slog.Error("reciever stream handler failed", "err", err)
+			slog.Error("receiver stream handler failed", "err", err)
 			break
 		}
 	}
@@ -38,7 +38,7 @@ func handleConnection(conn Conn) {
 	for {
 		stream, err := conn.AcceptStream(context.Background())
 		if err != nil {
-			slog.Error("reciever connection handler failed", "err", err)
+			slog.Error("receiver connection handler failed", "err", err)
 			break
 		}
 
@@ -46,11 +46,11 @@ func handleConnection(conn Conn) {
 	}
 }
 
-func (r *Reciever) recieve(listener Listener) {
+func (r *Receiver) recieve(listener Listener) {
 	for {
 		conn, err := listener.Accept(context.Background())
 		if err != nil {
-			slog.Error("reciever listener could not accept", "err", err)
+			slog.Error("receiver listener could not accept", "err", err)
 			break
 		}
 
@@ -59,7 +59,7 @@ func (r *Reciever) recieve(listener Listener) {
 	}
 }
 
-func (r *Reciever) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error {
+func (r *Receiver) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error {
 	listener, err := r.listen(tlsConfig, quicConfig)
 	if err != nil {
 		return err
@@ -70,14 +70,14 @@ func (r *Reciever) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error 
 	return nil
 }
 
-func (r *Reciever) Cleanup() {
+func (r *Receiver) Cleanup() {
 	if r.conn != nil {
-		r.conn.CloseWithError(0x0, "reciever connection closed normally")
+		r.conn.CloseWithError(0x0, "receiver connection closed normally")
 	}
 }
 
-func NewReciever(transport *quic.Transport) *Reciever {
-	return &Reciever{
+func NewReceiver(transport *quic.Transport) *Receiver {
+	return &Receiver{
 		listen: func(tlsConfig *tls.Config, quicConfig *quic.Config) (Listener, error) {
 			listener, err := transport.Listen(tlsConfig, quicConfig)
 			if err != nil {
