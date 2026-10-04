@@ -15,6 +15,7 @@ const IP_ADDRESS = "127.0.0.1"
 // TODO refactor
 type P2PNode struct {
 	transport *quic.Transport
+	receiver  *comms.Receiver
 	sender    *comms.Sender
 	addr      net.Addr
 }
@@ -24,6 +25,7 @@ func (n *P2PNode) Send(receiverAddr *net.UDPAddr, data []byte) {
 }
 
 func (n *P2PNode) Cleanup() {
+	defer n.receiver.Cleanup()
 	defer n.sender.Cleanup()
 	defer n.transport.Close()
 }
@@ -38,10 +40,12 @@ func NewP2PNode(addr *net.UDPAddr, listen UDPListenFunc) (*P2PNode, error) {
 	}
 
 	transport := &quic.Transport{Conn: udpConn}
+	receiver := comms.NewReceiver(transport)
 	sender := comms.NewSender(transport)
 
 	return &P2PNode{
 		transport: transport,
+		receiver:  receiver,
 		sender:    sender,
 		addr:      addr,
 	}, nil
