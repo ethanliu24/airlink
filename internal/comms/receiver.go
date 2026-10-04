@@ -78,11 +78,14 @@ func (r *Receiver) recieve(listener Listener) {
 }
 
 func (r *Receiver) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error {
+	r.mu.Lock()
 	if r.isListening {
+		r.mu.Unlock()
 		return ReceiverAlreadyListeningError
 	}
-
 	r.isListening = true
+	r.mu.Unlock()
+	
 	listener, err := r.listen(tlsConfig, quicConfig)
 	if err != nil {
 		return err
