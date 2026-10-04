@@ -13,14 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type mockListener struct {
-	acceptFunc func(context.Context) (Conn, error)
-}
-
-func (l *mockListener) Accept(ctx context.Context) (Conn, error) {
-	return l.acceptFunc(ctx)
-}
-
 func TestNewReceiver(t *testing.T) {
 	t.Parallel()
 
@@ -31,7 +23,7 @@ func TestNewReceiver(t *testing.T) {
 
 		require.NotNil(t, receiver)
 		require.NotNil(t, receiver.listen)
-		assert.Nil(t, receiver.conn)
+		assert.Nil(t, receiver.listener)
 	})
 }
 
@@ -94,17 +86,80 @@ func TestHandleStream(t *testing.T) {
 func TestHandleConnection(t *testing.T) {
 	t.Parallel()
 
-	t.Run("accepts streams and handles them", func(t *testing.T) {
-		streamHandled := make(chan struct{}, 1)
-		connectionClosed := make(chan struct{}, 1)
+	t.Run("accept stream error", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("connection closed")
+
+		conn := &mockConn{
+			acceptStreamFunc: func(context.Context) (Stream, error) {
+				return nil, expectedErr
+			},
+			closeWithErrFunc: func(
+				quic.ApplicationErrorCode,
+				string,
+			) error {
+				return nil
+			},
+		}
+
+		r := &Receiver{
+			conns: map[Conn]struct{}{
+				conn: {},
+			},
+		}
+
+		r.handleConnection(conn)
+
+		assert.NotContains(t, r.conns, conn)
+	})
+
+	t.Run("closes connection normally", func(t *testing.T) {
+		t.Parallel()
+
+		var closeCalled bool
+
+		conn := &mockConn{
+			acceptStreamFunc: func(context.Context) (Stream, error) {
+				return nil, errors.New("connection closed")
+			},
+			closeWithErrFunc: func(
+				code quic.ApplicationErrorCode,
+				msg string,
+			) error {
+				closeCalled = true
+
+				assert.Equal(t, quic.ApplicationErrorCode(0x0), code)
+				assert.Equal(
+					t,
+					"receiver connection closed normally",
+					msg,
+				)
+
+				return nil
+			},
+		}
+
+		r := &Receiver{
+			conns: map[Conn]struct{}{
+				conn: {},
+			},
+		}
+
+		r.handleConnection(conn)
+
+		assert.True(t, closeCalled)
+	})
+
+	t.Run("handles accepted stream", func(t *testing.T) {
+		t.Parallel()
+
+		streamHandled := make(chan struct{})
 
 		stream := &mockStream{
 			readFunc: func(data []byte) (int, error) {
-				streamHandled <- struct{}{}
+				close(streamHandled)
 				return 0, io.EOF
-			},
-			writeFunc: func([]byte) (int, error) {
-				return 0, errors.New("unexpected write")
 			},
 			closeFunc: func() error {
 				return nil
@@ -112,7 +167,6 @@ func TestHandleConnection(t *testing.T) {
 		}
 
 		acceptCalls := 0
-
 		conn := &mockConn{
 			acceptStreamFunc: func(context.Context) (Stream, error) {
 				acceptCalls++
@@ -121,32 +175,32 @@ func TestHandleConnection(t *testing.T) {
 					return stream, nil
 				}
 
-				connectionClosed <- struct{}{}
 				return nil, errors.New("connection closed")
 			},
-			openStreamFunc: func() (Stream, error) {
-				return nil, errors.New("unexpected open")
-			},
-			closeWithErrFunc: func(quic.ApplicationErrorCode, string) error {
+			closeWithErrFunc: func(
+				quic.ApplicationErrorCode,
+				string,
+			) error {
 				return nil
 			},
 		}
 
-		handleConnection(conn)
+		r := &Receiver{
+			conns: map[Conn]struct{}{
+				conn: {},
+			},
+		}
+
+		r.handleConnection(conn)
 
 		select {
 		case <-streamHandled:
 		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for stream to be handled")
+			t.Fatal("stream was not handled")
 		}
 
-		select {
-		case <-connectionClosed:
-		default:
-			// handleConnection should have attempted to accept another stream and received the error.
-		}
-
-		assert.GreaterOrEqual(t, acceptCalls, 2)
+		assert.Equal(t, 2, acceptCalls)
+		assert.NotContains(t, r.conns, conn)
 	})
 }
 
@@ -165,7 +219,7 @@ func TestReceiverListen(t *testing.T) {
 		err := receiver.Listen(&tls.Config{}, &quic.Config{})
 
 		require.ErrorIs(t, err, expectedErr)
-		assert.Nil(t, receiver.conn)
+		assert.Nil(t, receiver.listener)
 	})
 
 	t.Run("success", func(t *testing.T) {
@@ -213,11 +267,42 @@ func TestReceiverListen(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, receiver.isListening, true)
 	})
+
+	t.Run("success when calling Listen again when receiver is cleaned up", func(t *testing.T) {
+		listener := &mockListener{
+			acceptFunc: func(context.Context) (Conn, error) {
+				return nil, errors.New("listener closed")
+			},
+			closeFunc: func() error {
+				return nil
+			},
+		}
+
+		receiver := &Receiver{
+			listen: func(*tls.Config, *quic.Config) (Listener, error) {
+				return listener, nil
+			},
+		}
+
+		assert.False(t, receiver.isListening)
+
+		err := receiver.Listen(&tls.Config{}, &quic.Config{})
+		require.NoError(t, err)
+		assert.True(t, receiver.isListening)
+
+		receiver.Cleanup()
+		assert.False(t, receiver.isListening)
+
+		err = receiver.Listen(&tls.Config{}, &quic.Config{})
+		require.NoError(t, err)
+		assert.True(t, receiver.isListening)
+	})
 }
 
 func TestReceiverRecieve(t *testing.T) {
 	t.Parallel()
 
+	// TODO update
 	t.Run("accepts connection and stores it", func(t *testing.T) {
 		expectedConn := &mockConn{
 			acceptStreamFunc: func(context.Context) (Stream, error) {
@@ -242,41 +327,7 @@ func TestReceiverRecieve(t *testing.T) {
 
 		// Since Accept returned both a connection and an error,
 		// the production code currently stops before assigning conn.
-		assert.Nil(t, receiver.conn)
-	})
-
-	t.Run("stores accepted connection", func(t *testing.T) {
-		expectedConn := &mockConn{
-			acceptStreamFunc: func(context.Context) (Stream, error) {
-				return nil, errors.New("connection closed")
-			},
-			openStreamFunc: func() (Stream, error) {
-				return nil, errors.New("unexpected open")
-			},
-			closeWithErrFunc: func(quic.ApplicationErrorCode, string) error {
-				return nil
-			},
-		}
-
-		acceptCalls := 0
-
-		listener := &mockListener{
-			acceptFunc: func(context.Context) (Conn, error) {
-				acceptCalls++
-
-				if acceptCalls == 1 {
-					return expectedConn, nil
-				}
-
-				return nil, errors.New("listener closed")
-			},
-		}
-
-		receiver := &Receiver{}
-		receiver.recieve(listener)
-
-		assert.Equal(t, expectedConn, receiver.conn)
-		assert.Equal(t, 2, acceptCalls)
+		assert.Nil(t, receiver.listener)
 	})
 }
 
@@ -291,29 +342,23 @@ func TestReceiverCleanup(t *testing.T) {
 		})
 	})
 
-	t.Run("closes connection", func(t *testing.T) {
+	t.Run("closes listener", func(t *testing.T) {
 		closed := false
 
-		conn := &mockConn{
-			acceptStreamFunc: func(context.Context) (Stream, error) {
+		listener := &mockListener{
+			acceptFunc: func(context.Context) (Conn, error) {
 				return nil, errors.New("unexpected accept")
 			},
-			openStreamFunc: func() (Stream, error) {
-				return nil, errors.New("unexpected open")
-			},
-			closeWithErrFunc: func(code quic.ApplicationErrorCode, msg string) error {
+			closeFunc: func() (error) {
 				closed = true
-
-				assert.Equal(t, quic.ApplicationErrorCode(0), code)
-				assert.Equal(t, "receiver connection closed normally", msg)
-
 				return nil
 			},
 		}
 
-		receiver := &Receiver{conn: conn}
+		receiver := &Receiver{listener: listener}
 		receiver.Cleanup()
 
 		assert.True(t, closed)
+		assert.False(t, receiver.isListening)
 	})
 }

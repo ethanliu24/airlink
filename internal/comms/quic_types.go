@@ -61,3 +61,7 @@ func (l *quicListener) Accept(ctx context.Context) (Conn, error) {
 
 	return &quicConn{conn: conn}, nil
 }
+
+func(l *quicListener) Close() error {
+	return l.listener.Close()
+}

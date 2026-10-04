@@ -23,6 +23,7 @@ type Conn interface {
 
 type Listener interface {
 	Accept(context.Context) (Conn, error)
+	Close() error
 }
 
 type DialFunc func(context.Context, net.Addr, *tls.Config, *quic.Config) (Conn, error)
