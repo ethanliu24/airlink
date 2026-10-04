@@ -189,6 +189,30 @@ func TestReceiverListen(t *testing.T) {
 			return true
 		}, time.Second, time.Millisecond)
 	})
+
+	t.Run("errors if listener already listening", func(t *testing.T) {
+		listener := &mockListener{
+			acceptFunc: func(context.Context) (Conn, error) {
+				return nil, errors.New("listener closed")
+			},
+		}
+
+		receiver := &Receiver{
+			listen: func(*tls.Config, *quic.Config) (Listener, error) {
+				return listener, nil
+			},
+		}
+
+		assert.Equal(t, receiver.isListening, false)
+
+		err := receiver.Listen(&tls.Config{}, &quic.Config{})
+		require.NoError(t, err)
+		assert.Equal(t, receiver.isListening, true)
+
+		err = receiver.Listen(&tls.Config{}, &quic.Config{})
+		require.Error(t, err)
+		assert.Equal(t, receiver.isListening, true)
+	})
 }
 
 func TestReceiverRecieve(t *testing.T) {
