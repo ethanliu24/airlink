@@ -18,6 +18,7 @@ type Receiver struct {
 	listen      ListenFunc
 	listener    Listener
 	isListening bool
+	conns       map[Conn]struct{}
 	mu          sync.Mutex
 }
 
@@ -39,9 +40,14 @@ func handleStream(stream Stream) {
 	}
 }
 
-func handleConnection(conn Conn) {
+func (r *Receiver) handleConnection(conn Conn) {
 	defer func() {
 		_ = conn.CloseWithError(0x0, "receiver connection closed normally")
+
+		r.mu.Lock()
+		defer r.mu.Unlock()
+
+		delete(r.conns, conn)
 	}()
 
 	for {
@@ -63,7 +69,11 @@ func (r *Receiver) recieve(listener Listener) {
 			break
 		}
 
-		go handleConnection(conn)
+		r.mu.Lock()
+		r.conns[conn] = struct{}{}
+		r.mu.Unlock()
+
+		go r.handleConnection(conn)
 	}
 }
 
@@ -94,6 +104,11 @@ func (r *Receiver) Cleanup() {
 	if r.listener != nil {
 		r.listener.Close()
 		r.listener = nil
+	}
+
+	for conn := range r.conns {
+		_ = conn.CloseWithError(1, "sender tearing down")
+		delete(r.conns, conn)
 	}
 
 	r.isListening = false

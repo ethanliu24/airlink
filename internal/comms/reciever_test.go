@@ -86,17 +86,80 @@ func TestHandleStream(t *testing.T) {
 func TestHandleConnection(t *testing.T) {
 	t.Parallel()
 
-	t.Run("accepts streams and handles them", func(t *testing.T) {
-		streamHandled := make(chan struct{}, 1)
-		connectionClosed := make(chan struct{}, 1)
+	t.Run("accept stream error", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("connection closed")
+
+		conn := &mockConn{
+			acceptStreamFunc: func(context.Context) (Stream, error) {
+				return nil, expectedErr
+			},
+			closeWithErrFunc: func(
+				quic.ApplicationErrorCode,
+				string,
+			) error {
+				return nil
+			},
+		}
+
+		r := &Receiver{
+			conns: map[Conn]struct{}{
+				conn: {},
+			},
+		}
+
+		r.handleConnection(conn)
+
+		assert.NotContains(t, r.conns, conn)
+	})
+
+	t.Run("closes connection normally", func(t *testing.T) {
+		t.Parallel()
+
+		var closeCalled bool
+
+		conn := &mockConn{
+			acceptStreamFunc: func(context.Context) (Stream, error) {
+				return nil, errors.New("connection closed")
+			},
+			closeWithErrFunc: func(
+				code quic.ApplicationErrorCode,
+				msg string,
+			) error {
+				closeCalled = true
+
+				assert.Equal(t, quic.ApplicationErrorCode(0x0), code)
+				assert.Equal(
+					t,
+					"receiver connection closed normally",
+					msg,
+				)
+
+				return nil
+			},
+		}
+
+		r := &Receiver{
+			conns: map[Conn]struct{}{
+				conn: {},
+			},
+		}
+
+		r.handleConnection(conn)
+
+		assert.True(t, closeCalled)
+	})
+
+	t.Run("handles accepted stream", func(t *testing.T) {
+		t.Parallel()
+
+		streamHandled := make(chan struct{})
 
 		stream := &mockStream{
 			readFunc: func(data []byte) (int, error) {
-				streamHandled <- struct{}{}
+				close(streamHandled)
 				return 0, io.EOF
-			},
-			writeFunc: func([]byte) (int, error) {
-				return 0, errors.New("unexpected write")
 			},
 			closeFunc: func() error {
 				return nil
@@ -104,7 +167,6 @@ func TestHandleConnection(t *testing.T) {
 		}
 
 		acceptCalls := 0
-
 		conn := &mockConn{
 			acceptStreamFunc: func(context.Context) (Stream, error) {
 				acceptCalls++
@@ -113,32 +175,32 @@ func TestHandleConnection(t *testing.T) {
 					return stream, nil
 				}
 
-				connectionClosed <- struct{}{}
 				return nil, errors.New("connection closed")
 			},
-			openStreamFunc: func() (Stream, error) {
-				return nil, errors.New("unexpected open")
-			},
-			closeWithErrFunc: func(quic.ApplicationErrorCode, string) error {
+			closeWithErrFunc: func(
+				quic.ApplicationErrorCode,
+				string,
+			) error {
 				return nil
 			},
 		}
 
-		handleConnection(conn)
+		r := &Receiver{
+			conns: map[Conn]struct{}{
+				conn: {},
+			},
+		}
+
+		r.handleConnection(conn)
 
 		select {
 		case <-streamHandled:
 		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for stream to be handled")
+			t.Fatal("stream was not handled")
 		}
 
-		select {
-		case <-connectionClosed:
-		default:
-			// handleConnection should have attempted to accept another stream and received the error.
-		}
-
-		assert.GreaterOrEqual(t, acceptCalls, 2)
+		assert.Equal(t, 2, acceptCalls)
+		assert.NotContains(t, r.conns, conn)
 	})
 }
 
