@@ -1,4 +1,4 @@
-package comms
+package node
 
 import (
 	"crypto/rand"
@@ -12,8 +12,6 @@ import (
 
 	"github.com/quic-go/quic-go"
 )
-
-var MAX_HANDSHAKE_TIMEOUT_SECONDS = 3 * time.Second
 
 // TODO properly config this
 func generateTLSConfig() *tls.Config {

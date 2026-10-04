@@ -15,6 +15,9 @@ import (
 
 const SENDER_TEST_IP = "127.0.0.1"
 
+var tlsConfig *tls.Config = generateTLSConfig()
+var quicConfig *quic.Config = getQuicConfig()
+
 func TestNewSender(t *testing.T) {
 	t.Parallel()
 
@@ -42,7 +45,7 @@ func TestSend(t *testing.T) {
 			conns: make(map[string]Conn),
 		}
 
-		err := sender.Send(addr, []byte("test payload"))
+		err := sender.Send(addr, []byte("test payload"), tlsConfig, quicConfig)
 
 		require.Error(t, err)
 		assert.EqualError(t, err, "mock dial connection failed")
@@ -80,7 +83,7 @@ func TestSend(t *testing.T) {
 		}
 
 		// sendData runs asynchronously, so the connection may be removed immediately after Send returns.
-		err := sender.Send(addr, []byte("test payload"))
+		err := sender.Send(addr, []byte("test payload"), tlsConfig, quicConfig)
 
 		require.NoError(t, err)
 
