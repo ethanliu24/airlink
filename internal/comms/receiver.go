@@ -11,9 +11,12 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+var ReceiverAlreadyListeningError = errors.New("receiver is already listening")
+
 type Receiver struct {
-	listen ListenFunc
-	conn   Conn
+	listen      ListenFunc
+	conn        Conn
+	isListening bool
 }
 
 func handleStream(stream Stream) {
@@ -60,6 +63,11 @@ func (r *Receiver) recieve(listener Listener) {
 }
 
 func (r *Receiver) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error {
+	if r.isListening {
+		return ReceiverAlreadyListeningError
+	}
+
+	r.isListening = true
 	listener, err := r.listen(tlsConfig, quicConfig)
 	if err != nil {
 		return err
@@ -88,5 +96,7 @@ func NewReceiver(transport *quic.Transport) *Receiver {
 				listener: listener,
 			}, nil
 		},
+		conn: nil,
+		isListening: false,
 	}
 }
