@@ -17,7 +17,6 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-
 func toUDPAddress(ip string, port int) (*net.UDPAddr, error) {
 	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
 	return net.ResolveUDPAddr("udp", addr)
@@ -52,10 +51,9 @@ func generateTLSConfig() *tls.Config {
 	}
 }
 
-
 func getQuicConfig() *quic.Config {
 	return &quic.Config{
-		MaxIdleTimeout: 30 * time.Second,
+		MaxIdleTimeout:  30 * time.Second,
 		KeepAlivePeriod: 15 * time.Second,
 	}
 }
@@ -101,4 +99,17 @@ func (c *mockConn) CloseWithError(
 	msg string,
 ) error {
 	return c.closeWithErrFunc(code, msg)
+}
+
+type mockListener struct {
+	acceptFunc func(context.Context) (Conn, error)
+	closeFunc  func() error
+}
+
+func (l *mockListener) Accept(ctx context.Context) (Conn, error) {
+	return l.acceptFunc(ctx)
+}
+
+func (l *mockListener) Close() error {
+	return l.closeFunc()
 }

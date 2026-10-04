@@ -13,14 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type mockListener struct {
-	acceptFunc func(context.Context) (Conn, error)
-}
-
-func (l *mockListener) Accept(ctx context.Context) (Conn, error) {
-	return l.acceptFunc(ctx)
-}
-
 func TestNewReceiver(t *testing.T) {
 	t.Parallel()
 
@@ -31,7 +23,7 @@ func TestNewReceiver(t *testing.T) {
 
 		require.NotNil(t, receiver)
 		require.NotNil(t, receiver.listen)
-		assert.Nil(t, receiver.conn)
+		assert.Nil(t, receiver.listener)
 	})
 }
 
@@ -165,7 +157,7 @@ func TestReceiverListen(t *testing.T) {
 		err := receiver.Listen(&tls.Config{}, &quic.Config{})
 
 		require.ErrorIs(t, err, expectedErr)
-		assert.Nil(t, receiver.conn)
+		assert.Nil(t, receiver.listener)
 	})
 
 	t.Run("success", func(t *testing.T) {
@@ -213,11 +205,42 @@ func TestReceiverListen(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, receiver.isListening, true)
 	})
+
+	t.Run("success when calling Listen again when receiver is cleaned up", func(t *testing.T) {
+		listener := &mockListener{
+			acceptFunc: func(context.Context) (Conn, error) {
+				return nil, errors.New("listener closed")
+			},
+			closeFunc: func() error {
+				return nil
+			},
+		}
+
+		receiver := &Receiver{
+			listen: func(*tls.Config, *quic.Config) (Listener, error) {
+				return listener, nil
+			},
+		}
+
+		assert.False(t, receiver.isListening)
+
+		err := receiver.Listen(&tls.Config{}, &quic.Config{})
+		require.NoError(t, err)
+		assert.True(t, receiver.isListening)
+
+		receiver.Cleanup()
+		assert.False(t, receiver.isListening)
+
+		err = receiver.Listen(&tls.Config{}, &quic.Config{})
+		require.NoError(t, err)
+		assert.True(t, receiver.isListening)
+	})
 }
 
 func TestReceiverRecieve(t *testing.T) {
 	t.Parallel()
 
+	// TODO update
 	t.Run("accepts connection and stores it", func(t *testing.T) {
 		expectedConn := &mockConn{
 			acceptStreamFunc: func(context.Context) (Stream, error) {
@@ -242,41 +265,7 @@ func TestReceiverRecieve(t *testing.T) {
 
 		// Since Accept returned both a connection and an error,
 		// the production code currently stops before assigning conn.
-		assert.Nil(t, receiver.conn)
-	})
-
-	t.Run("stores accepted connection", func(t *testing.T) {
-		expectedConn := &mockConn{
-			acceptStreamFunc: func(context.Context) (Stream, error) {
-				return nil, errors.New("connection closed")
-			},
-			openStreamFunc: func() (Stream, error) {
-				return nil, errors.New("unexpected open")
-			},
-			closeWithErrFunc: func(quic.ApplicationErrorCode, string) error {
-				return nil
-			},
-		}
-
-		acceptCalls := 0
-
-		listener := &mockListener{
-			acceptFunc: func(context.Context) (Conn, error) {
-				acceptCalls++
-
-				if acceptCalls == 1 {
-					return expectedConn, nil
-				}
-
-				return nil, errors.New("listener closed")
-			},
-		}
-
-		receiver := &Receiver{}
-		receiver.recieve(listener)
-
-		assert.Equal(t, expectedConn, receiver.conn)
-		assert.Equal(t, 2, acceptCalls)
+		assert.Nil(t, receiver.listener)
 	})
 }
 
@@ -291,29 +280,23 @@ func TestReceiverCleanup(t *testing.T) {
 		})
 	})
 
-	t.Run("closes connection", func(t *testing.T) {
+	t.Run("closes listener", func(t *testing.T) {
 		closed := false
 
-		conn := &mockConn{
-			acceptStreamFunc: func(context.Context) (Stream, error) {
+		listener := &mockListener{
+			acceptFunc: func(context.Context) (Conn, error) {
 				return nil, errors.New("unexpected accept")
 			},
-			openStreamFunc: func() (Stream, error) {
-				return nil, errors.New("unexpected open")
-			},
-			closeWithErrFunc: func(code quic.ApplicationErrorCode, msg string) error {
+			closeFunc: func() (error) {
 				closed = true
-
-				assert.Equal(t, quic.ApplicationErrorCode(0), code)
-				assert.Equal(t, "receiver connection closed normally", msg)
-
 				return nil
 			},
 		}
 
-		receiver := &Receiver{conn: conn}
+		receiver := &Receiver{listener: listener}
 		receiver.Cleanup()
 
 		assert.True(t, closed)
+		assert.False(t, receiver.isListening)
 	})
 }

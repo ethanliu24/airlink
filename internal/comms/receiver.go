@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 
 	"github.com/quic-go/quic-go"
 )
@@ -15,8 +16,9 @@ var ReceiverAlreadyListeningError = errors.New("receiver is already listening")
 
 type Receiver struct {
 	listen      ListenFunc
-	conn        Conn
+	listener    Listener
 	isListening bool
+	mu          sync.Mutex
 }
 
 func handleStream(stream Stream) {
@@ -38,6 +40,10 @@ func handleStream(stream Stream) {
 }
 
 func handleConnection(conn Conn) {
+	defer func() {
+		_ = conn.CloseWithError(0x0, "receiver connection closed normally")
+	}()
+
 	for {
 		stream, err := conn.AcceptStream(context.Background())
 		if err != nil {
@@ -57,7 +63,6 @@ func (r *Receiver) recieve(listener Listener) {
 			break
 		}
 
-		r.conn = conn
 		go handleConnection(conn)
 	}
 }
@@ -73,15 +78,25 @@ func (r *Receiver) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error 
 		return err
 	}
 
+	r.mu.Lock()
+	r.listener = listener
+	r.mu.Unlock()
+
 	go r.recieve(listener)
 
 	return nil
 }
 
 func (r *Receiver) Cleanup() {
-	if r.conn != nil {
-		r.conn.CloseWithError(0x0, "receiver connection closed normally")
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.listener != nil {
+		r.listener.Close()
+		r.listener = nil
 	}
+
+	r.isListening = false
 }
 
 func NewReceiver(transport *quic.Transport) *Receiver {
@@ -96,7 +111,7 @@ func NewReceiver(transport *quic.Transport) *Receiver {
 				listener: listener,
 			}, nil
 		},
-		conn: nil,
+		listener:    nil,
 		isListening: false,
 	}
 }
