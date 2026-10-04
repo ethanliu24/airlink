@@ -7,13 +7,15 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/quic-go/quic-go"
 )
 
-type Sender struct {
-	dial DialFunc
+var MAX_HANDSHAKE_TIMEOUT_SECONDS = 3 * time.Second
 
+type Sender struct {
+	dial  DialFunc
 	mu    sync.Mutex
 	conns map[string]Conn
 }
@@ -62,13 +64,18 @@ func (s *Sender) sendData(addr string, conn Conn, data []byte) {
 	}()
 }
 
-func (s *Sender) Send(receiverAddr *net.UDPAddr, data []byte) error {
+func (s *Sender) Send(
+	receiverAddr *net.UDPAddr,
+	data []byte,
+	tlsConfig *tls.Config,
+	quicConfig *quic.Config,
+) error {
 	ctx, cancel := context.WithTimeout(context.Background(), MAX_HANDSHAKE_TIMEOUT_SECONDS)
 	defer cancel()
 
 	addr := receiverAddr.String()
 
-	conn, err := s.dial(ctx, receiverAddr, generateTLSConfig(), getQuicConfig())
+	conn, err := s.dial(ctx, receiverAddr, tlsConfig, quicConfig)
 	if err != nil {
 		return err
 	}
