@@ -13,6 +13,7 @@ import (
 
 type Reciever struct {
 	listen ListenFunc
+	conn   Conn
 }
 
 func handleStream(stream Stream) {
@@ -34,8 +35,6 @@ func handleStream(stream Stream) {
 }
 
 func handleConnection(conn Conn) {
-	defer conn.CloseWithError(0x0, "reciever connection closed normally")
-
 	for {
 		stream, err := conn.AcceptStream(context.Background())
 		if err != nil {
@@ -47,7 +46,7 @@ func handleConnection(conn Conn) {
 	}
 }
 
-func recieve(listener Listener) {
+func (r *Reciever) recieve(listener Listener) {
 	for {
 		conn, err := listener.Accept(context.Background())
 		if err != nil {
@@ -55,6 +54,7 @@ func recieve(listener Listener) {
 			break
 		}
 
+		r.conn = conn
 		go handleConnection(conn)
 	}
 }
@@ -65,13 +65,15 @@ func (r *Reciever) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error 
 		return err
 	}
 
-	go recieve(listener)
+	go r.recieve(listener)
 
 	return nil
 }
 
 func (r *Reciever) Cleanup() {
-	// TODO
+	if r.conn != nil {
+		r.conn.CloseWithError(0x0, "reciever connection closed normally")
+	}
 }
 
 func NewReciever(transport *quic.Transport) *Reciever {
@@ -88,4 +90,3 @@ func NewReciever(transport *quic.Transport) *Reciever {
 		},
 	}
 }
-
