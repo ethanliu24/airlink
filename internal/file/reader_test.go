@@ -6,134 +6,164 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestOpenReader(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.txt")
+	t.Run("opens regular file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "test.txt")
+		require.NoError(t, os.WriteFile(path, []byte("hello"), 0644))
 
-	content := []byte("hello, world")
+		reader, err := OpenReader(path)
 
-	err := os.WriteFile(path, content, 0644)
-	if err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
+		require.NoError(t, err)
+		require.NotNil(t, reader)
+		require.NotNil(t, reader.file)
 
-	reader, err := OpenReader(path)
-	if err != nil {
-		t.Fatalf("OpenReader() returned error: %v", err)
-	}
-	defer reader.Close()
+		t.Cleanup(func() {
+			_ = reader.Close()
+		})
+	})
 
-	if reader.file == nil {
-		t.Fatal("OpenReader() returned reader with nil file")
-	}
-}
+	t.Run("opens file through symlink", func(t *testing.T) {
+		if os.Getenv("GOOS") == "windows" {
+			t.Skip("symlink creation may require elevated privileges on Windows")
+		}
 
-func TestOpenReader_FileDoesNotExist(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "does-not-exist.txt")
+		dir := t.TempDir()
+		target := filepath.Join(dir, "target.txt")
+		link := filepath.Join(dir, "link.txt")
 
-	_, err := OpenReader(path)
-	if err == nil {
-		t.Fatal("OpenReader() expected error for nonexistent file")
-	}
+		require.NoError(t, os.WriteFile(target, []byte("hello"), 0644))
+		require.NoError(t, os.Symlink(target, link))
+
+		reader, err := OpenReader(link)
+
+		require.NoError(t, err)
+		require.NotNil(t, reader)
+
+		t.Cleanup(func() {
+			_ = reader.Close()
+		})
+
+		data, err := io.ReadAll(reader)
+		require.NoError(t, err)
+
+		assert.Equal(t, []byte("hello"), data)
+	})
+
+	t.Run("returns error for nonexistent file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "does-not-exist.txt")
+
+		reader, err := OpenReader(path)
+
+		assert.Nil(t, reader)
+		assert.Error(t, err)
+	})
+
+	t.Run("returns error for broken symlink", func(t *testing.T) {
+		if os.Getenv("GOOS") == "windows" {
+			t.Skip("symlink creation may require elevated privileges on Windows")
+		}
+
+		dir := t.TempDir()
+		target := filepath.Join(dir, "does-not-exist.txt")
+		link := filepath.Join(dir, "broken-link.txt")
+
+		require.NoError(t, os.Symlink(target, link))
+
+		reader, err := OpenReader(link)
+
+		assert.Nil(t, reader)
+		assert.Error(t, err)
+	})
+
+	t.Run("rejects directory", func(t *testing.T) {
+		path := t.TempDir()
+
+		reader, err := OpenReader(path)
+
+		assert.Nil(t, reader)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "path is not a regular file")
+	})
 }
 
 func TestFileReader_Read(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.txt")
-
+	path := filepath.Join(t.TempDir(), "test.txt")
 	content := []byte("hello, world")
 
-	err := os.WriteFile(path, content, 0644)
-	if err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, content, 0644))
 
 	reader, err := OpenReader(path)
-	if err != nil {
-		t.Fatalf("OpenReader() returned error: %v", err)
-	}
-	defer reader.Close()
+	require.NoError(t, err)
 
-	buf := make([]byte, BYTES_TO_READ)
+	t.Cleanup(func() {
+		_ = reader.Close()
+	})
+
+	buf := make([]byte, len(content))
 
 	n, err := reader.Read(buf)
-	if err != nil && !errors.Is(err, io.EOF) {
-		t.Fatalf("Read() returned unexpected error: %v", err)
-	}
 
-	if got := string(buf[:n]); got != string(content) {
-		t.Fatalf("Read() = %q, want %q", got, content)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, len(content), n)
+	assert.Equal(t, content, buf[:n])
 }
 
 func TestFileReader_ReadMultipleChunks(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.txt")
-
+	path := filepath.Join(t.TempDir(), "test.txt")
 	content := []byte("abcdefghijklmnopqrstuvwxyz")
 
-	err := os.WriteFile(path, content, 0644)
-	if err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, content, 0644))
 
 	reader, err := OpenReader(path)
-	if err != nil {
-		t.Fatalf("OpenReader() returned error: %v", err)
-	}
-	defer reader.Close()
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = reader.Close()
+	})
 
 	buf := make([]byte, 4)
-	var got []byte
+	var result []byte
 
 	for {
 		n, err := reader.Read(buf)
 
 		if n > 0 {
-			got = append(got, buf[:n]...)
+			result = append(result, buf[:n]...)
 		}
 
 		if errors.Is(err, io.EOF) {
 			break
 		}
 
-		if err != nil {
-			t.Fatalf("Read() returned unexpected error: %v", err)
-		}
+		require.NoError(t, err)
 	}
 
-	if string(got) != string(content) {
-		t.Fatalf("Read() = %q, want %q", got, content)
-	}
+	assert.Equal(t, content, result)
 }
 
 func TestFileReader_Close(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.txt")
+	path := filepath.Join(t.TempDir(), "test.txt")
 
-	err := os.WriteFile(path, []byte("hello"), 0644)
-	if err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("hello"), 0644))
 
 	reader, err := OpenReader(path)
-	if err != nil {
-		t.Fatalf("OpenReader() returned error: %v", err)
-	}
+	require.NoError(t, err)
 
-	if err := reader.Close(); err != nil {
-		t.Fatalf("Close() returned error: %v", err)
-	}
+	require.NoError(t, reader.Close())
+
+	_, err = reader.Read(make([]byte, 1))
+	assert.Error(t, err)
 }
 
-func TestFileReader_CloseWithoutFile(t *testing.T) {
+func TestFileReader_CloseNilFile(t *testing.T) {
 	reader := &FileReader{}
 
 	err := reader.Close()
 
-	if !errors.Is(err, FileIsNullError) {
-		t.Fatalf("Close() = %v, want %v", err, FileIsNullError)
-	}
+	assert.ErrorIs(t, err, FileIsNullError)
 }
