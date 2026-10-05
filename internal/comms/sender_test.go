@@ -87,6 +87,8 @@ func TestSend(t *testing.T) {
 
 		require.NoError(t, err)
 
+		sender.Cleanup()
+
 		require.Eventually(t, func() bool {
 			sender.mu.Lock()
 			defer sender.mu.Unlock()
@@ -189,16 +191,9 @@ func TestSendData(t *testing.T) {
 			openStreamFunc: func() (Stream, error) {
 				return stream, nil
 			},
-			closeWithErrFunc: func(
-				code quic.ApplicationErrorCode,
-				msg string,
-			) error {
+			closeWithErrFunc: func(code quic.ApplicationErrorCode, msg string) error {
 				assert.Equal(t, quic.ApplicationErrorCode(0), code)
-				assert.Equal(
-					t,
-					"sender connection closed gracefully",
-					msg,
-				)
+				assert.Equal(t, "sender connection closed gracefully", msg)
 
 				connClosed <- struct{}{}
 				return nil
@@ -226,19 +221,15 @@ func TestSendData(t *testing.T) {
 			t.Fatal("timed out waiting for stream to close")
 		}
 
-		select {
-		case <-connClosed:
-		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for connection to close")
-		}
-
 		require.Eventually(t, func() bool {
 			sender.mu.Lock()
 			defer sender.mu.Unlock()
 
 			_, exists := sender.conns["test"]
-			return !exists
+			return exists
 		}, time.Second, time.Millisecond)
+
+		sender.Cleanup()
 	})
 
 	t.Run("stream limit reached", func(t *testing.T) {
@@ -265,12 +256,17 @@ func TestSendData(t *testing.T) {
 
 		sender.sendData(conn, []byte("test payload"))
 
-		assert.True(t, connClosed)
-
+		assert.False(t, connClosed)
 		sender.mu.Lock()
 		_, exists := sender.conns["test"]
 		sender.mu.Unlock()
+		assert.True(t, exists)
 
+		sender.Cleanup()
+		assert.True(t, connClosed)
+		sender.mu.Lock()
+		_, exists = sender.conns["test"]
+		sender.mu.Unlock()
 		assert.False(t, exists)
 	})
 
@@ -299,12 +295,18 @@ func TestSendData(t *testing.T) {
 
 		sender.sendData(conn, []byte("test payload"))
 
-		assert.True(t, connClosed)
+		assert.False(t, connClosed)
 
 		sender.mu.Lock()
 		_, exists := sender.conns["test"]
 		sender.mu.Unlock()
+		assert.True(t, exists)
 
+		sender.Cleanup()
+		assert.True(t, connClosed)
+		sender.mu.Lock()
+		_, exists = sender.conns["test"]
+		sender.mu.Unlock()
 		assert.False(t, exists)
 	})
 }
@@ -336,8 +338,8 @@ func TestCleanup(t *testing.T) {
 					code quic.ApplicationErrorCode,
 					msg string,
 				) error {
-					assert.Equal(t, quic.ApplicationErrorCode(1), code)
-					assert.Equal(t, "sender tearing down", msg)
+					assert.Equal(t, quic.ApplicationErrorCode(0x0), code)
+					assert.Equal(t, "sender connection closed gracefully", msg)
 
 					closed[addr] = true
 					return nil

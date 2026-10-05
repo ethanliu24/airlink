@@ -82,7 +82,7 @@ func (s *Sender) Cleanup() {
 	defer s.mu.Unlock()
 
 	for addr, conn := range s.conns {
-		_ = conn.CloseWithError(1, "sender tearing down")
+		_ = conn.CloseWithError(0x0, "sender connection closed gracefully")
 		delete(s.conns, addr)
 	}
 }
