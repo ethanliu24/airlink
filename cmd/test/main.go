@@ -39,8 +39,6 @@ func printToTerminal(format string, a ...any) {
 // go run cmd/test/main.go > tmp/test_node_1.txt
 // go run cmd/test/main.go --rev=true > tmp/test_node_2.txt
 func main() {
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-
 	reverse := flag.Bool("rev", false, "reverse the send and receive port assignments")
 
 	flag.Parse()

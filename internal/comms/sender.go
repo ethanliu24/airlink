@@ -25,8 +25,7 @@ func sendOverStream(stream Stream, data []byte) error {
 
 	n, err := stream.Write(data)
 	if err != nil {
-		slog.Error("sender stream write failed", "bytesWritten", n, "err", err)
-
+		slog.Error("sender sendOverStream write failed", "bytesWritten", n, "err", err)
 		return err
 	}
 
@@ -34,24 +33,13 @@ func sendOverStream(stream Stream, data []byte) error {
 	return nil
 }
 
-func (s *Sender) sendData(addr string, conn Conn, data []byte) {
-	defer func() {
-		_ = conn.CloseWithError(0, "sender connection closed gracefully")
-
-		s.mu.Lock()
-		defer s.mu.Unlock()
-
-		if current, ok := s.conns[addr]; ok && current == conn {
-			delete(s.conns, addr)
-		}
-	}()
-
+func (s *Sender) sendData(conn Conn, data []byte) {
 	stream, err := conn.OpenStream()
 	if err != nil {
 		if errors.Is(err, &quic.StreamLimitReachedError{}) {
 			slog.Error("sender stream limit reached", "err", err)
 		} else {
-			slog.Error("sender stream open failed", "err", err)
+			slog.Error("sender streamData open failed", "err", err)
 		}
 
 		return
@@ -84,7 +72,7 @@ func (s *Sender) Send(
 	s.conns[addr] = conn
 	s.mu.Unlock()
 
-	go s.sendData(addr, conn, data)
+	go s.sendData(conn, data)
 
 	return nil
 }
