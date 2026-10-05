@@ -33,11 +33,21 @@ func (fr *FileReader) Close() error {
 type OpenReaderFunc func(path string) (*FileReader, error)
 
 func OpenReader(path string) (*FileReader, error) {
-	file, err := os.Open(path)
+	canonicalPath, err := resolveCanonicalPath(path)
 	if err != nil {
 		return nil, err
 	}
 
+	file, err := os.Open(*canonicalPath)
+	if err != nil {
+		return nil, err
+	}
+
+	err = validateRegularFile(file)
+	if err != nil {
+		return nil, err
+	}
+	
 	return &FileReader{
 		file: file,
 	}, nil
