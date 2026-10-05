@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net"
 
-	"airlink/internal/comms"
+	"airlink/internal/transfer"
 
 	"github.com/quic-go/quic-go"
 )
