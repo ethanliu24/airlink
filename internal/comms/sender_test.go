@@ -211,7 +211,7 @@ func TestSendData(t *testing.T) {
 			},
 		}
 
-		sender.sendData("test", conn, data)
+		sender.sendData(conn, data)
 
 		select {
 		case actual := <-written:
@@ -263,7 +263,7 @@ func TestSendData(t *testing.T) {
 			},
 		}
 
-		sender.sendData("test", conn, []byte("test payload"))
+		sender.sendData(conn, []byte("test payload"))
 
 		assert.True(t, connClosed)
 
@@ -297,7 +297,7 @@ func TestSendData(t *testing.T) {
 			},
 		}
 
-		sender.sendData("test", conn, []byte("test payload"))
+		sender.sendData(conn, []byte("test payload"))
 
 		assert.True(t, connClosed)
 

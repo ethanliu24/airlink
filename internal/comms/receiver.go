@@ -31,10 +31,9 @@ func handleStream(stream Stream) {
 		fmt.Printf("%s", string(buf[:n]))
 
 		if errors.Is(err, io.EOF) {
-			fmt.Println()
 			break
 		} else if err != nil {
-			slog.Error("receiver handleStream failed", "err", err, "errType", fmt.Sprintf("%T", err))
+			slog.Error("receiver stream closed", "err", err, "errType", fmt.Sprintf("%T", err))
 			break
 		}
 	}
@@ -53,7 +52,7 @@ func (r *Receiver) handleConnection(conn Conn) {
 	for {
 		stream, err := conn.AcceptStream(context.Background())
 		if err != nil {
-			slog.Error("receiver handleConnection failed", "err", err, "errType", fmt.Sprintf("%T", err))
+			slog.Debug("receiver connection closed", "err", err, "errType", fmt.Sprintf("%T", err))
 			break
 		}
 
