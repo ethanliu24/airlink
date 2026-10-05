@@ -128,5 +128,6 @@ func NewReceiver(transport *quic.Transport) *Receiver {
 		},
 		listener:    nil,
 		isListening: false,
+		conns:       make(map[Conn]struct{}),
 	}
 }
