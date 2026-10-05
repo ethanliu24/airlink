@@ -34,7 +34,7 @@ func handleStream(stream Stream) {
 			fmt.Println()
 			break
 		} else if err != nil {
-			slog.Error("receiver stream handler failed", "err", err)
+			slog.Error("receiver handleStream failed", "err", err, "errType", fmt.Sprintf("%T", err))
 			break
 		}
 	}
@@ -53,7 +53,7 @@ func (r *Receiver) handleConnection(conn Conn) {
 	for {
 		stream, err := conn.AcceptStream(context.Background())
 		if err != nil {
-			slog.Error("receiver connection handler failed", "err", err)
+			slog.Error("receiver handleConnection failed", "err", err, "errType", fmt.Sprintf("%T", err))
 			break
 		}
 
@@ -85,7 +85,7 @@ func (r *Receiver) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error 
 	}
 	r.isListening = true
 	r.mu.Unlock()
-	
+
 	listener, err := r.listen(tlsConfig, quicConfig)
 	if err != nil {
 		return err
@@ -110,7 +110,7 @@ func (r *Receiver) Cleanup() {
 	}
 
 	for conn := range r.conns {
-		_ = conn.CloseWithError(1, "sender tearing down")
+		_ = conn.CloseWithError(1, "receiver tearing down")
 		delete(r.conns, conn)
 	}
 

@@ -25,8 +25,7 @@ func sendOverStream(stream Stream, data []byte) error {
 
 	n, err := stream.Write(data)
 	if err != nil {
-		slog.Error("sender stream write failed", "bytesWritten", n, "err", err)
-
+		slog.Error("sender sendOverStream write failed", "bytesWritten", n, "err", err)
 		return err
 	}
 
@@ -51,7 +50,7 @@ func (s *Sender) sendData(addr string, conn Conn, data []byte) {
 		if errors.Is(err, &quic.StreamLimitReachedError{}) {
 			slog.Error("sender stream limit reached", "err", err)
 		} else {
-			slog.Error("sender stream open failed", "err", err)
+			slog.Error("sender streamData open failed", "err", err)
 		}
 
 		return
