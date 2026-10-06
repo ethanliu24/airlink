@@ -23,7 +23,7 @@ func TestNewSender(t *testing.T) {
 
 	transport := &quic.Transport{}
 
-	sender := NewSender(transport)
+	sender := NewSender(transport, newMockReader)
 
 	require.NotNil(t, sender)
 	require.NotNil(t, sender.dial)
@@ -105,6 +105,7 @@ func TestSendOverStream(t *testing.T) {
 		var written []byte
 		closed := false
 
+		sender := &Sender{}
 		stream := &mockStream{
 			writeFunc: func(data []byte) (int, error) {
 				written = append(written, data...)
@@ -116,7 +117,7 @@ func TestSendOverStream(t *testing.T) {
 			},
 		}
 
-		err := sendOverStream(stream, "test_payload.txt")
+		err := sender.sendOverStream(stream, "test_payload.txt")
 
 		require.NoError(t, err)
 		assert.Equal(t, "TODO", written)
@@ -127,6 +128,7 @@ func TestSendOverStream(t *testing.T) {
 		expectedErr := errors.New("write failed")
 		closed := false
 
+		sender := &Sender{}
 		stream := &mockStream{
 			writeFunc: func([]byte) (int, error) {
 				return 0, expectedErr
@@ -137,7 +139,7 @@ func TestSendOverStream(t *testing.T) {
 			},
 		}
 
-		err := sendOverStream(stream, "test_payload.txt")
+		err := sender.sendOverStream(stream, "test_payload.txt")
 
 		assert.ErrorIs(t, err, expectedErr)
 		assert.True(t, closed)
@@ -157,7 +159,8 @@ func TestSendOverStream(t *testing.T) {
 			},
 		}
 
-		err := sendOverStream(stream, "test_payload.txt")
+		sender := &Sender{}
+		err := sender.sendOverStream(stream, "test_payload.txt")
 
 		assert.ErrorIs(t, err, expectedErr)
 		assert.True(t, closed)

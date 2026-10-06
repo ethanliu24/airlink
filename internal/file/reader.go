@@ -30,9 +30,9 @@ func (fr *FileReader) Close() error {
 	return fr.file.Close()
 }
 
-type OpenReaderFunc func(path string) (*FileReader, error)
+type OpenReaderFunc func(path string) (Reader, error)
 
-func OpenReader(path string) (*FileReader, error) {
+func OpenReader(path string) (Reader, error) {
 	canonicalPath, err := resolveCanonicalPath(path)
 	if err != nil {
 		return nil, err
@@ -47,7 +47,7 @@ func OpenReader(path string) (*FileReader, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &FileReader{
 		file: file,
 	}, nil

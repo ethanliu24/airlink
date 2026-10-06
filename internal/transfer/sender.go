@@ -18,15 +18,16 @@ var MAX_HANDSHAKE_TIMEOUT_SECONDS = 3 * time.Second
 var FILE_READ_CHUNK_SIZE_BYTES = 1024 * 64
 
 type Sender struct {
-	dial  DialFunc
-	mu    sync.Mutex
-	conns map[string]Conn
+	dial       DialFunc
+	openReader file.OpenReaderFunc
+	mu         sync.Mutex
+	conns      map[string]Conn
 }
 
-func sendOverStream(stream Stream, filename string) error {
+func (s *Sender) sendOverStream(stream Stream, filename string) error {
 	defer stream.Close()
 
-	reader, err := file.OpenReader(filename) // TODO replace with dependency injected func
+	reader, err := s.openReader(filename)
 	if err != nil {
 		return err
 	}
@@ -69,7 +70,7 @@ func (s *Sender) sendFile(conn Conn, filename string) {
 	}
 
 	go func() {
-		if err := sendOverStream(stream, filename); err != nil {
+		if err := s.sendOverStream(stream, filename); err != nil {
 			slog.Error("sender failed to send data", "err", err)
 		}
 	}()
@@ -110,7 +111,7 @@ func (s *Sender) Cleanup() {
 	}
 }
 
-func NewSender(transport *quic.Transport) *Sender {
+func NewSender(transport *quic.Transport, openReader file.OpenReaderFunc) *Sender {
 	return &Sender{
 		dial: func(ctx context.Context, addr net.Addr, tlsConf *tls.Config, conf *quic.Config) (Conn, error) {
 			conn, err := transport.Dial(ctx, addr, tlsConf, conf)
@@ -122,6 +123,7 @@ func NewSender(transport *quic.Transport) *Sender {
 				conn: conn,
 			}, nil
 		},
-		conns: make(map[string]Conn),
+		conns:      make(map[string]Conn),
+		openReader: openReader,
 	}
 }

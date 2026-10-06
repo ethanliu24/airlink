@@ -1,6 +1,7 @@
 package comms
 
 import (
+	"airlink/internal/file"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -112,4 +113,22 @@ func (l *mockListener) Accept(ctx context.Context) (Conn, error) {
 
 func (l *mockListener) Close() error {
 	return l.closeFunc()
+}
+
+type mockReader struct {
+
+}
+
+func (r *mockReader) Read(p []byte) (int, error) {
+	return 0, nil
+}
+
+func (r *mockReader) Close() error {
+	return nil
+}
+
+func newMockReader(data string) (file.Reader, error) {
+	return &mockReader{
+
+	}, nil
 }

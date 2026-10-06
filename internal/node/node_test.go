@@ -1,6 +1,7 @@
 package node
 
 import (
+	"airlink/internal/file"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,10 @@ const NODE_TEST_IP = "127.0.0.1"
 
 func mockListen(network string, address *net.UDPAddr) (*net.UDPConn, error) {
 	return &net.UDPConn{}, nil
+}
+
+func mockOpenReader(path string) (file.Reader, error) {
+	return nil, nil
 }
 
 func toUDPAddress(ip string, port int) (*net.UDPAddr, error) {
@@ -32,7 +37,7 @@ func TestNewP2PNodeInternal(t *testing.T) {
 		addr, err := toUDPAddress(NODE_TEST_IP, 1234)
 		require.NoError(t, err)
 
-		node, err := newP2PNode(addr, mockListen)
+		node, err := newP2PNode(addr, mockListen, mockOpenReader)
 		require.NoError(t, err)
 		assert.Equal(t, fmt.Sprintf("%s:1234", NODE_TEST_IP), node.addr.String())
 
