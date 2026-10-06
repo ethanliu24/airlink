@@ -1,9 +1,11 @@
 package comms
 
 import (
+	"airlink/internal/file"
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -13,6 +15,7 @@ import (
 )
 
 var MAX_HANDSHAKE_TIMEOUT_SECONDS = 3 * time.Second
+var FILE_READ_CHUNK_SIZE_BYTES = 1024 * 64
 
 type Sender struct {
 	dial  DialFunc
@@ -23,13 +26,33 @@ type Sender struct {
 func sendOverStream(stream Stream, filename string) error {
 	defer stream.Close()
 
-	n, err := stream.Write([]byte(""))
+	reader, err := file.OpenReader(filename) // TODO replace with dependency injected func
 	if err != nil {
-		slog.Error("sender sendOverStream write failed", "bytesWritten", n, "err", err)
 		return err
 	}
 
-	slog.Debug("send successful", "bytesWritten", n)
+	defer reader.Close()
+
+	buf := make([]byte, FILE_READ_CHUNK_SIZE_BYTES)
+	for {
+		bytesRead, err := reader.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+
+			return err
+		}
+
+		if bytesRead > 0 {
+			_, err := stream.Write(buf)
+
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
