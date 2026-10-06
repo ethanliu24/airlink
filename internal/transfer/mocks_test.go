@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"time"
@@ -116,11 +117,22 @@ func (l *mockListener) Close() error {
 }
 
 type mockReader struct {
-
+	data    string
+	pointer int
 }
 
 func (r *mockReader) Read(p []byte) (int, error) {
-	return 0, nil
+	if r.pointer > len(r.data) {
+		return 0, io.EOF
+	}
+
+	remaining := len(r.data) - r.pointer
+	bytesToRead := min(cap(p), remaining)
+	dataRead := r.data[r.pointer:r.pointer + bytesToRead]
+	r.pointer += bytesToRead
+	copy(p, []byte(dataRead))
+
+	return bytesToRead, nil
 }
 
 func (r *mockReader) Close() error {
@@ -129,6 +141,7 @@ func (r *mockReader) Close() error {
 
 func newMockReader(data string) (file.Reader, error) {
 	return &mockReader{
-
+		data:    data,
+		pointer: 0,
 	}, nil
 }
