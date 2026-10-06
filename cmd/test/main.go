@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"runtime"
 	"strings"
@@ -58,7 +57,7 @@ func main() {
 		log.Fatalf("receiver udp addr creation failed: %v\n", err)
 	}
 
-	node, err := node.NewP2PNode(senderAddr, net.ListenUDP)
+	node, err := node.NewP2PNode(senderAddr)
 	defer node.Cleanup()
 
 	err = node.Listen()
