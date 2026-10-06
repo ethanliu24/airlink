@@ -20,10 +20,10 @@ type Sender struct {
 	conns map[string]Conn
 }
 
-func sendOverStream(stream Stream, data []byte) error {
+func sendOverStream(stream Stream, filename string) error {
 	defer stream.Close()
 
-	n, err := stream.Write(data)
+	n, err := stream.Write([]byte(""))
 	if err != nil {
 		slog.Error("sender sendOverStream write failed", "bytesWritten", n, "err", err)
 		return err
@@ -33,7 +33,7 @@ func sendOverStream(stream Stream, data []byte) error {
 	return nil
 }
 
-func (s *Sender) sendData(conn Conn, data []byte) {
+func (s *Sender) sendFile(conn Conn, filename string) {
 	stream, err := conn.OpenStream()
 	if err != nil {
 		if errors.Is(err, &quic.StreamLimitReachedError{}) {
@@ -46,7 +46,7 @@ func (s *Sender) sendData(conn Conn, data []byte) {
 	}
 
 	go func() {
-		if err := sendOverStream(stream, data); err != nil {
+		if err := sendOverStream(stream, filename); err != nil {
 			slog.Error("sender failed to send data", "err", err)
 		}
 	}()
@@ -54,7 +54,7 @@ func (s *Sender) sendData(conn Conn, data []byte) {
 
 func (s *Sender) Send(
 	receiverAddr *net.UDPAddr,
-	data []byte,
+	filename string,
 	tlsConfig *tls.Config,
 	quicConfig *quic.Config,
 ) error {
@@ -72,7 +72,7 @@ func (s *Sender) Send(
 	s.conns[addr] = conn
 	s.mu.Unlock()
 
-	go s.sendData(conn, data)
+	go s.sendFile(conn, filename)
 
 	return nil
 }

@@ -75,7 +75,7 @@ func main() {
 		case "q", "quit", "exit":
 			os.Exit(0)
 		default:
-			node.Send(receiverAddr, []byte(data))
+			node.SendFile(receiverAddr, "TODO")
 		}
 	}
 }

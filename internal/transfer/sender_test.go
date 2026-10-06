@@ -45,7 +45,7 @@ func TestSend(t *testing.T) {
 			conns: make(map[string]Conn),
 		}
 
-		err := sender.Send(addr, []byte("test payload"), tlsConfig, quicConfig)
+		err := sender.Send(addr, "test_payload.txe", tlsConfig, quicConfig)
 
 		require.Error(t, err)
 		assert.EqualError(t, err, "mock dial connection failed")
@@ -82,8 +82,8 @@ func TestSend(t *testing.T) {
 			conns: make(map[string]Conn),
 		}
 
-		// sendData runs asynchronously, so the connection may be removed immediately after Send returns.
-		err := sender.Send(addr, []byte("test payload"), tlsConfig, quicConfig)
+		// sendFile runs asynchronously, so the connection may be removed immediately after Send returns.
+		err := sender.Send(addr, "test_payload.txt", tlsConfig, quicConfig)
 
 		require.NoError(t, err)
 
@@ -116,12 +116,10 @@ func TestSendOverStream(t *testing.T) {
 			},
 		}
 
-		data := []byte("test payload")
-
-		err := sendOverStream(stream, data)
+		err := sendOverStream(stream, "test_payload.txt")
 
 		require.NoError(t, err)
-		assert.Equal(t, data, written)
+		assert.Equal(t, "TODO", written)
 		assert.True(t, closed)
 	})
 
@@ -139,7 +137,7 @@ func TestSendOverStream(t *testing.T) {
 			},
 		}
 
-		err := sendOverStream(stream, []byte("test payload"))
+		err := sendOverStream(stream, "test_payload.txt")
 
 		assert.ErrorIs(t, err, expectedErr)
 		assert.True(t, closed)
@@ -159,18 +157,18 @@ func TestSendOverStream(t *testing.T) {
 			},
 		}
 
-		err := sendOverStream(stream, []byte("test payload"))
+		err := sendOverStream(stream, "test_payload.txt")
 
 		assert.ErrorIs(t, err, expectedErr)
 		assert.True(t, closed)
 	})
 }
 
-func TestSendData(t *testing.T) {
+func TestSendFile(t *testing.T) {
 	t.Parallel()
 
 	t.Run("successfully opens stream and sends data", func(t *testing.T) {
-		data := []byte("test payload")
+		data := []byte("TODO")
 
 		written := make(chan []byte, 1)
 		streamClosed := make(chan struct{}, 1)
@@ -206,7 +204,7 @@ func TestSendData(t *testing.T) {
 			},
 		}
 
-		sender.sendData(conn, data)
+		sender.sendFile(conn, "test_payload.txt")
 
 		select {
 		case actual := <-written:
@@ -254,7 +252,7 @@ func TestSendData(t *testing.T) {
 			},
 		}
 
-		sender.sendData(conn, []byte("test payload"))
+		sender.sendFile(conn, "test_payload.txt")
 
 		assert.False(t, connClosed)
 		sender.mu.Lock()
@@ -293,7 +291,7 @@ func TestSendData(t *testing.T) {
 			},
 		}
 
-		sender.sendData(conn, []byte("test payload"))
+		sender.sendFile(conn, "test_payload.txt")
 
 		assert.False(t, connClosed)
 

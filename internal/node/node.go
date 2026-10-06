@@ -27,8 +27,8 @@ func (n *P2PNode) Listen() error {
 	return n.receiver.Listen(n.tlsConfig, n.quicConfig)
 }
 
-func (n *P2PNode) Send(receiverAddr *net.UDPAddr, data []byte) error {
-	return n.sender.Send(receiverAddr, data, n.tlsConfig, n.quicConfig)
+func (n *P2PNode) SendFile(receiverAddr *net.UDPAddr, filename string) error {
+	return n.sender.Send(receiverAddr, filename, n.tlsConfig, n.quicConfig)
 }
 
 func (n *P2PNode) Cleanup() {
