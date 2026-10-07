@@ -1,4 +1,4 @@
-package comms
+package transfer
 
 import (
 	"context"
