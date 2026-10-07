@@ -12,6 +12,8 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+const RECEIVER_BUFFER_SIZE_BYTES = 1024 * 64
+
 var ReceiverAlreadyListeningError = errors.New("receiver is already listening")
 
 type Receiver struct {
@@ -25,7 +27,7 @@ type Receiver struct {
 func handleStream(stream Stream) {
 	defer stream.Close()
 
-	buf := make([]byte, 1024)
+	buf := make([]byte, RECEIVER_BUFFER_SIZE_BYTES)
 	for {
 		n, err := stream.Read(buf)
 		fmt.Printf("%s", string(buf[:n]))
