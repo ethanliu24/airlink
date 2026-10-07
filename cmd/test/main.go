@@ -35,18 +35,14 @@ func printToTerminal(format string, a ...any) {
 }
 
 // Run the commands in two terminals:
-// go run cmd/test/main.go > tmp/test_node_1.txt
-// go run cmd/test/main.go --rev=true > tmp/test_node_2.txt
+// go run cmd/test/main.go
+// go run cmd/test/main.go --sender=true
 func main() {
-	reverse := flag.Bool("rev", false, "reverse the send and receive port assignments")
+	isSender := flag.Bool("sender", false, "whether the node is listening only and not sending anything")
 
 	flag.Parse()
 
 	senderPort, receiverPort := PORT_1, PORT_2
-	if *reverse {
-		senderPort, receiverPort = PORT_2, PORT_1
-	}
-
 	senderAddr, err := node.CreateUDPAddress(LOCAL_IP, senderPort)
 	if err != nil {
 		log.Fatalf("sender udp addr creation failed: %v\n", err)
@@ -60,22 +56,25 @@ func main() {
 	node, err := node.NewP2PNode(senderAddr)
 	defer node.Cleanup()
 
-	err = node.Listen()
-	if err != nil {
-		log.Fatalf("node listen failed: %v\n", err)
-	}
+	if !*isSender {
+		err = node.Listen()
+		if err != nil {
+			log.Fatalf("node listen failed: %v\n", err)
+		}
+	} else {
+		for {
+			printToTerminal("Enter data to send to port %d: ", receiverPort)
+			reader := bufio.NewReader(os.Stdin)
+			input, _ := reader.ReadString('\n')
+			userInput := strings.TrimSpace(input)
 
-	for {
-		printToTerminal("Enter data to send to port %d: ", receiverPort)
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		userInput := strings.TrimSpace(input)
-
-		switch userInput {
-		case "q", "quit", "exit":
-			os.Exit(0)
-		default:
-			node.SendFile(receiverAddr, userInput)
+			switch userInput {
+			case "q", "quit", "exit":
+				os.Exit(0)
+			default:
+				node.SendFile(receiverAddr, userInput)
+			}
 		}
 	}
+
 }
