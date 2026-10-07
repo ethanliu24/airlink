@@ -34,7 +34,7 @@ func (s *Sender) sendOverStream(stream Stream, filename string) error {
 
 	defer reader.Close()
 
-	buf := make([]byte, 0, FILE_READ_CHUNK_SIZE_BYTES)
+	buf := make([]byte, FILE_READ_CHUNK_SIZE_BYTES)
 	for {
 		bytesRead, err := reader.Read(buf)
 		if err != nil {

@@ -19,6 +19,10 @@ type FileReader struct {
 }
 
 func (fr *FileReader) Read(p []byte) (int, error) {
+	if fr.file == nil {
+		return 0, FileIsNullError
+	}
+
 	return fr.file.Read(p)
 }
 

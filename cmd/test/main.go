@@ -69,13 +69,13 @@ func main() {
 		printToTerminal("Enter data to send to port %d: ", receiverPort)
 		reader := bufio.NewReader(os.Stdin)
 		input, _ := reader.ReadString('\n')
-		data := strings.TrimSpace(input)
+		userInput := strings.TrimSpace(input)
 
-		switch data {
+		switch userInput {
 		case "q", "quit", "exit":
 			os.Exit(0)
 		default:
-			node.SendFile(receiverAddr, "TODO")
+			node.SendFile(receiverAddr, userInput)
 		}
 	}
 }
