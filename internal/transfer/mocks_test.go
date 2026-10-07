@@ -122,7 +122,7 @@ type mockReader struct {
 }
 
 func (r *mockReader) Read(p []byte) (int, error) {
-	if r.pointer > len(r.data) {
+	if r.pointer >= len(r.data) {
 		return 0, io.EOF
 	}
 
