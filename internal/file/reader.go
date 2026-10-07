@@ -19,6 +19,10 @@ type FileReader struct {
 }
 
 func (fr *FileReader) Read(p []byte) (int, error) {
+	if fr.file == nil {
+		return 0, FileIsNullError
+	}
+
 	return fr.file.Read(p)
 }
 
@@ -30,9 +34,9 @@ func (fr *FileReader) Close() error {
 	return fr.file.Close()
 }
 
-type OpenReaderFunc func(path string) (*FileReader, error)
+type OpenReaderFunc func(path string) (Reader, error)
 
-func OpenReader(path string) (*FileReader, error) {
+func OpenReader(path string) (Reader, error) {
 	canonicalPath, err := resolveCanonicalPath(path)
 	if err != nil {
 		return nil, err
@@ -47,7 +51,7 @@ func OpenReader(path string) (*FileReader, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &FileReader{
 		file: file,
 	}, nil

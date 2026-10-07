@@ -1,9 +1,11 @@
 package comms
 
 import (
+	"airlink/internal/file"
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -13,27 +15,49 @@ import (
 )
 
 var MAX_HANDSHAKE_TIMEOUT_SECONDS = 3 * time.Second
+var FILE_READ_CHUNK_SIZE_BYTES = 1024 * 64
 
 type Sender struct {
-	dial  DialFunc
-	mu    sync.Mutex
-	conns map[string]Conn
+	dial       DialFunc
+	openReader file.OpenReaderFunc
+	mu         sync.Mutex
+	conns      map[string]Conn
 }
 
-func sendOverStream(stream Stream, data []byte) error {
+func (s *Sender) sendOverStream(stream Stream, filename string) error {
 	defer stream.Close()
 
-	n, err := stream.Write(data)
+	reader, err := s.openReader(filename)
 	if err != nil {
-		slog.Error("sender sendOverStream write failed", "bytesWritten", n, "err", err)
 		return err
 	}
 
-	slog.Debug("send successful", "bytesWritten", n)
+	defer reader.Close()
+
+	buf := make([]byte, FILE_READ_CHUNK_SIZE_BYTES)
+	for {
+		bytesRead, err := reader.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+
+			return err
+		}
+
+		if bytesRead > 0 {
+			_, err := stream.Write(buf[:bytesRead])
+
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
-func (s *Sender) sendData(conn Conn, data []byte) {
+func (s *Sender) sendFile(conn Conn, filename string) {
 	stream, err := conn.OpenStream()
 	if err != nil {
 		if errors.Is(err, &quic.StreamLimitReachedError{}) {
@@ -46,7 +70,7 @@ func (s *Sender) sendData(conn Conn, data []byte) {
 	}
 
 	go func() {
-		if err := sendOverStream(stream, data); err != nil {
+		if err := s.sendOverStream(stream, filename); err != nil {
 			slog.Error("sender failed to send data", "err", err)
 		}
 	}()
@@ -54,7 +78,7 @@ func (s *Sender) sendData(conn Conn, data []byte) {
 
 func (s *Sender) Send(
 	receiverAddr *net.UDPAddr,
-	data []byte,
+	filename string,
 	tlsConfig *tls.Config,
 	quicConfig *quic.Config,
 ) error {
@@ -72,7 +96,7 @@ func (s *Sender) Send(
 	s.conns[addr] = conn
 	s.mu.Unlock()
 
-	go s.sendData(conn, data)
+	go s.sendFile(conn, filename)
 
 	return nil
 }
@@ -87,7 +111,7 @@ func (s *Sender) Cleanup() {
 	}
 }
 
-func NewSender(transport *quic.Transport) *Sender {
+func NewSender(transport *quic.Transport, openReader file.OpenReaderFunc) *Sender {
 	return &Sender{
 		dial: func(ctx context.Context, addr net.Addr, tlsConf *tls.Config, conf *quic.Config) (Conn, error) {
 			conn, err := transport.Dial(ctx, addr, tlsConf, conf)
@@ -99,6 +123,7 @@ func NewSender(transport *quic.Transport) *Sender {
 				conn: conn,
 			}, nil
 		},
-		conns: make(map[string]Conn),
+		conns:      make(map[string]Conn),
+		openReader: openReader,
 	}
 }

@@ -20,7 +20,6 @@ func TestOpenReader(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, reader)
-		require.NotNil(t, reader.file)
 
 		t.Cleanup(func() {
 			_ = reader.Close()

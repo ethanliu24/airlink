@@ -1,6 +1,7 @@
 package comms
 
 import (
+	"airlink/internal/file"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -23,7 +24,7 @@ func TestNewSender(t *testing.T) {
 
 	transport := &quic.Transport{}
 
-	sender := NewSender(transport)
+	sender := NewSender(transport, newMockReader)
 
 	require.NotNil(t, sender)
 	require.NotNil(t, sender.dial)
@@ -41,14 +42,15 @@ func TestSend(t *testing.T) {
 		}
 
 		sender := &Sender{
-			dial:  mockDialErr,
-			conns: make(map[string]Conn),
+			dial:       mockDialErr,
+			conns:      make(map[string]Conn),
+			openReader: newMockReader,
 		}
 
-		err := sender.Send(addr, []byte("test payload"), tlsConfig, quicConfig)
+		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
 
 		require.Error(t, err)
-		assert.EqualError(t, err, "mock dial connection failed")
+		assert.Equal(t, "mock dial connection failed", err.Error())
 		assert.Empty(t, sender.conns)
 	})
 
@@ -58,15 +60,153 @@ func TestSend(t *testing.T) {
 			Port: 12345,
 		}
 
+		expectedConn := &mockConn{
+			openStreamFunc: func() (Stream, error) {
+				return &mockStream{
+					writeFunc: func(data []byte) (int, error) {
+						return len(data), nil
+					},
+					closeFunc: func() error {
+						return nil
+					},
+				}, nil
+			},
+		}
+
+		sender := &Sender{
+			dial: func(
+				_ context.Context,
+				_ net.Addr,
+				_ *tls.Config,
+				_ *quic.Config,
+			) (Conn, error) {
+				return expectedConn, nil
+			},
+			conns:      make(map[string]Conn),
+			openReader: newMockReader,
+		}
+
+		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
+
+		require.NoError(t, err)
+
+		sender.mu.Lock()
+		conn, exists := sender.conns[addr.String()]
+		sender.mu.Unlock()
+
+		require.True(t, exists)
+		assert.Same(t, expectedConn, conn)
+	})
+
+	t.Run("open stream error", func(t *testing.T) {
+		addr := &net.UDPAddr{
+			IP:   net.ParseIP(SENDER_TEST_IP),
+			Port: 12345,
+		}
+
+		expectedErr := errors.New("open stream failed")
+
 		conn := &mockConn{
 			openStreamFunc: func() (Stream, error) {
-				return nil, errors.New("not expected")
+				return nil, expectedErr
 			},
-			closeWithErrFunc: func(
-				quic.ApplicationErrorCode,
-				string,
-			) error {
+		}
+
+		sender := &Sender{
+			dial: func(
+				_ context.Context,
+				_ net.Addr,
+				_ *tls.Config,
+				_ *quic.Config,
+			) (Conn, error) {
+				return conn, nil
+			},
+			conns:      make(map[string]Conn),
+			openReader: newMockReader,
+		}
+
+		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
+
+		require.NoError(t, err)
+
+		// Send itself succeeds because the stream operation
+		// happens asynchronously.
+		assert.NotNil(t, sender.conns[addr.String()])
+	})
+
+	t.Run("file is written to stream", func(t *testing.T) {
+		addr := &net.UDPAddr{
+			IP:   net.ParseIP(SENDER_TEST_IP),
+			Port: 12345,
+		}
+
+		done := make(chan struct{})
+		var received []byte
+
+		stream := &mockStream{
+			writeFunc: func(data []byte) (int, error) {
+				received = append(received, data...)
+				return len(data), nil
+			},
+			closeFunc: func() error {
+				close(done)
 				return nil
+			},
+		}
+
+		conn := &mockConn{
+			openStreamFunc: func() (Stream, error) {
+				return stream, nil
+			},
+		}
+
+		sender := &Sender{
+			dial: func(_ context.Context,
+				_ net.Addr,
+				_ *tls.Config,
+				_ *quic.Config,
+			) (Conn, error) {
+				return conn, nil
+			},
+			conns:      make(map[string]Conn),
+			openReader: newMockReader,
+		}
+
+		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
+
+		require.NoError(t, err)
+
+		select {
+		case <-done:
+			assert.Equal(t, "test.txt", "test.txt")
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for file transfer")
+		}
+	})
+
+	t.Run("reader error", func(t *testing.T) {
+		addr := &net.UDPAddr{
+			IP:   net.ParseIP(SENDER_TEST_IP),
+			Port: 12345,
+		}
+
+		expectedErr := errors.New("reader failed")
+
+		streamClosed := make(chan struct{})
+
+		stream := &mockStream{
+			writeFunc: func(data []byte) (int, error) {
+				return len(data), nil
+			},
+			closeFunc: func() error {
+				close(streamClosed)
+				return nil
+			},
+		}
+
+		conn := &mockConn{
+			openStreamFunc: func() (Stream, error) {
+				return stream, nil
 			},
 		}
 
@@ -80,109 +220,39 @@ func TestSend(t *testing.T) {
 				return conn, nil
 			},
 			conns: make(map[string]Conn),
+			openReader: func(_ string) (file.Reader, error) {
+				return nil, expectedErr
+			},
 		}
 
-		// sendData runs asynchronously, so the connection may be removed immediately after Send returns.
-		err := sender.Send(addr, []byte("test payload"), tlsConfig, quicConfig)
+		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
 
 		require.NoError(t, err)
 
-		sender.Cleanup()
-
-		require.Eventually(t, func() bool {
-			sender.mu.Lock()
-			defer sender.mu.Unlock()
-
-			return len(sender.conns) == 0
-		}, time.Second, time.Millisecond)
+		select {
+		case <-streamClosed:
+			// The stream should still be closed when
+			// opening the file fails.
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for stream to close")
+		}
 	})
-}
 
-func TestSendOverStream(t *testing.T) {
-	t.Parallel()
+	t.Run("stream write error", func(t *testing.T) {
+		addr := &net.UDPAddr{
+			IP:   net.ParseIP(SENDER_TEST_IP),
+			Port: 12345,
+		}
 
-	t.Run("success", func(t *testing.T) {
-		var written []byte
-		closed := false
+		expectedErr := errors.New("stream write failed")
+		streamClosed := make(chan struct{})
 
 		stream := &mockStream{
 			writeFunc: func(data []byte) (int, error) {
-				written = append(written, data...)
-				return len(data), nil
-			},
-			closeFunc: func() error {
-				closed = true
-				return nil
-			},
-		}
-
-		data := []byte("test payload")
-
-		err := sendOverStream(stream, data)
-
-		require.NoError(t, err)
-		assert.Equal(t, data, written)
-		assert.True(t, closed)
-	})
-
-	t.Run("write error", func(t *testing.T) {
-		expectedErr := errors.New("write failed")
-		closed := false
-
-		stream := &mockStream{
-			writeFunc: func([]byte) (int, error) {
 				return 0, expectedErr
 			},
 			closeFunc: func() error {
-				closed = true
-				return nil
-			},
-		}
-
-		err := sendOverStream(stream, []byte("test payload"))
-
-		assert.ErrorIs(t, err, expectedErr)
-		assert.True(t, closed)
-	})
-
-	t.Run("partial write with error", func(t *testing.T) {
-		expectedErr := errors.New("partial write failed")
-		closed := false
-
-		stream := &mockStream{
-			writeFunc: func(data []byte) (int, error) {
-				return 5, expectedErr
-			},
-			closeFunc: func() error {
-				closed = true
-				return nil
-			},
-		}
-
-		err := sendOverStream(stream, []byte("test payload"))
-
-		assert.ErrorIs(t, err, expectedErr)
-		assert.True(t, closed)
-	})
-}
-
-func TestSendData(t *testing.T) {
-	t.Parallel()
-
-	t.Run("successfully opens stream and sends data", func(t *testing.T) {
-		data := []byte("test payload")
-
-		written := make(chan []byte, 1)
-		streamClosed := make(chan struct{}, 1)
-		connClosed := make(chan struct{}, 1)
-
-		stream := &mockStream{
-			writeFunc: func(data []byte) (int, error) {
-				written <- append([]byte(nil), data...)
-				return len(data), nil
-			},
-			closeFunc: func() error {
-				streamClosed <- struct{}{}
+				close(streamClosed)
 				return nil
 			},
 		}
@@ -191,173 +261,94 @@ func TestSendData(t *testing.T) {
 			openStreamFunc: func() (Stream, error) {
 				return stream, nil
 			},
-			closeWithErrFunc: func(code quic.ApplicationErrorCode, msg string) error {
-				assert.Equal(t, quic.ApplicationErrorCode(0), code)
-				assert.Equal(t, "sender connection closed gracefully", msg)
-
-				connClosed <- struct{}{}
-				return nil
-			},
 		}
 
 		sender := &Sender{
-			conns: map[string]Conn{
-				"test": conn,
+			dial: func(
+				_ context.Context,
+				_ net.Addr,
+				_ *tls.Config,
+				_ *quic.Config,
+			) (Conn, error) {
+				return conn, nil
 			},
+			conns:      make(map[string]Conn),
+			openReader: newMockReader,
 		}
 
-		sender.sendData(conn, data)
+		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
 
-		select {
-		case actual := <-written:
-			assert.Equal(t, data, actual)
-		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for data to be written")
-		}
+		require.NoError(t, err)
 
 		select {
 		case <-streamClosed:
+			// Expected.
 		case <-time.After(time.Second):
 			t.Fatal("timed out waiting for stream to close")
 		}
-
-		require.Eventually(t, func() bool {
-			sender.mu.Lock()
-			defer sender.mu.Unlock()
-
-			_, exists := sender.conns["test"]
-			return exists
-		}, time.Second, time.Millisecond)
-
-		sender.Cleanup()
-	})
-
-	t.Run("stream limit reached", func(t *testing.T) {
-		connClosed := false
-
-		conn := &mockConn{
-			openStreamFunc: func() (Stream, error) {
-				return nil, &quic.StreamLimitReachedError{}
-			},
-			closeWithErrFunc: func(
-				quic.ApplicationErrorCode,
-				string,
-			) error {
-				connClosed = true
-				return nil
-			},
-		}
-
-		sender := &Sender{
-			conns: map[string]Conn{
-				"test": conn,
-			},
-		}
-
-		sender.sendData(conn, []byte("test payload"))
-
-		assert.False(t, connClosed)
-		sender.mu.Lock()
-		_, exists := sender.conns["test"]
-		sender.mu.Unlock()
-		assert.True(t, exists)
-
-		sender.Cleanup()
-		assert.True(t, connClosed)
-		sender.mu.Lock()
-		_, exists = sender.conns["test"]
-		sender.mu.Unlock()
-		assert.False(t, exists)
-	})
-
-	t.Run("stream open error", func(t *testing.T) {
-		expectedErr := errors.New("open stream failed")
-		connClosed := false
-
-		conn := &mockConn{
-			openStreamFunc: func() (Stream, error) {
-				return nil, expectedErr
-			},
-			closeWithErrFunc: func(
-				quic.ApplicationErrorCode,
-				string,
-			) error {
-				connClosed = true
-				return nil
-			},
-		}
-
-		sender := &Sender{
-			conns: map[string]Conn{
-				"test": conn,
-			},
-		}
-
-		sender.sendData(conn, []byte("test payload"))
-
-		assert.False(t, connClosed)
-
-		sender.mu.Lock()
-		_, exists := sender.conns["test"]
-		sender.mu.Unlock()
-		assert.True(t, exists)
-
-		sender.Cleanup()
-		assert.True(t, connClosed)
-		sender.mu.Lock()
-		_, exists = sender.conns["test"]
-		sender.mu.Unlock()
-		assert.False(t, exists)
 	})
 }
 
 func TestCleanup(t *testing.T) {
 	t.Parallel()
 
-	t.Run("empty sender", func(t *testing.T) {
-		sender := &Sender{
-			conns: make(map[string]Conn),
-		}
+	var closedConnections []string
 
-		assert.NotPanics(t, func() {
-			sender.Cleanup()
-		})
+	conn1 := &mockConn{
+		closeWithErrFunc: func(
+			code quic.ApplicationErrorCode,
+			msg string,
+		) error {
+			closedConnections = append(closedConnections, "conn1")
 
-		assert.Empty(t, sender.conns)
-	})
+			assert.Equal(t, quic.ApplicationErrorCode(0x0), code)
+			assert.Equal(t, "sender connection closed gracefully", msg)
 
-	t.Run("closes all connections", func(t *testing.T) {
-		closed := make(map[string]bool)
+			return nil
+		},
+	}
 
-		newConn := func(addr string) Conn {
-			return &mockConn{
-				openStreamFunc: func() (Stream, error) {
-					return nil, errors.New("not expected")
-				},
-				closeWithErrFunc: func(
-					code quic.ApplicationErrorCode,
-					msg string,
-				) error {
-					assert.Equal(t, quic.ApplicationErrorCode(0x0), code)
-					assert.Equal(t, "sender connection closed gracefully", msg)
+	conn2 := &mockConn{
+		closeWithErrFunc: func(
+			code quic.ApplicationErrorCode,
+			msg string,
+		) error {
+			closedConnections = append(closedConnections, "conn2")
 
-					closed[addr] = true
-					return nil
-				},
-			}
-		}
+			assert.Equal(t, quic.ApplicationErrorCode(0x0), code)
+			assert.Equal(t, "sender connection closed gracefully", msg)
 
-		sender := &Sender{
-			conns: map[string]Conn{
-				"addr-1": newConn("addr-1"),
-				"addr-2": newConn("addr-2"),
-			},
-		}
+			return nil
+		},
+	}
 
+	sender := &Sender{
+		conns: map[string]Conn{
+			"127.0.0.1:12345": conn1,
+			"127.0.0.1:12346": conn2,
+		},
+	}
+
+	sender.Cleanup()
+
+	assert.Empty(t, sender.conns)
+	assert.ElementsMatch(
+		t,
+		[]string{"conn1", "conn2"},
+		closedConnections,
+	)
+}
+
+func TestCleanupEmpty(t *testing.T) {
+	t.Parallel()
+
+	sender := &Sender{
+		conns: make(map[string]Conn),
+	}
+
+	assert.NotPanics(t, func() {
 		sender.Cleanup()
-
-		assert.True(t, closed["addr-1"])
-		assert.True(t, closed["addr-2"])
-		assert.Empty(t, sender.conns)
 	})
+
+	assert.Empty(t, sender.conns)
 }

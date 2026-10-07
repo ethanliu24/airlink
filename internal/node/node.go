@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 
+	"airlink/internal/file"
 	"airlink/internal/transfer"
 
 	"github.com/quic-go/quic-go"
@@ -27,24 +28,27 @@ func (n *P2PNode) Listen() error {
 	return n.receiver.Listen(n.tlsConfig, n.quicConfig)
 }
 
-func (n *P2PNode) Send(receiverAddr *net.UDPAddr, data []byte) error {
-	return n.sender.Send(receiverAddr, data, n.tlsConfig, n.quicConfig)
+func (n *P2PNode) SendFile(receiverAddr *net.UDPAddr, filename string) error {
+	return n.sender.Send(receiverAddr, filename, n.tlsConfig, n.quicConfig)
 }
 
 func (n *P2PNode) Cleanup() {
-	defer n.receiver.Cleanup()
-	defer n.sender.Cleanup()
-	defer n.transport.Close()
+	n.receiver.Cleanup()
+	n.sender.Cleanup()
+	n.transport.Close()
 }
 
-
 func NewP2PNode(addr *net.UDPAddr) (*P2PNode, error) {
-	return newP2PNode(addr, net.ListenUDP)
+	return newP2PNode(addr, net.ListenUDP, file.OpenReader)
 }
 
 type udpListenFunc func(network string, address *net.UDPAddr) (*net.UDPConn, error)
 
-func newP2PNode(addr *net.UDPAddr, listen udpListenFunc) (*P2PNode, error) {
+func newP2PNode(
+	addr *net.UDPAddr,
+	listen udpListenFunc,
+	openReader file.OpenReaderFunc,
+) (*P2PNode, error) {
 	udpConn, err := listen(addr.Network(), addr)
 	if err != nil {
 		slog.Error("could not listen on UDP address", "address", addr, "err", err)
@@ -56,7 +60,7 @@ func newP2PNode(addr *net.UDPAddr, listen udpListenFunc) (*P2PNode, error) {
 
 	transport := &quic.Transport{Conn: udpConn}
 	receiver := comms.NewReceiver(transport)
-	sender := comms.NewSender(transport)
+	sender := comms.NewSender(transport, openReader)
 
 	return &P2PNode{
 		transport:  transport,
