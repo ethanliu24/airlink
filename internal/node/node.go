@@ -13,12 +13,10 @@ import (
 
 const IP_ADDRESS = "127.0.0.1"
 
-// TODO transport cleanup
-// TODO refactor
 type P2PNode struct {
 	transport  *quic.Transport
-	receiver   *comms.Receiver
-	sender     *comms.Sender
+	receiver   *transfer.Receiver
+	sender     *transfer.Sender
 	addr       net.Addr
 	tlsConfig  *tls.Config
 	quicConfig *quic.Config
@@ -59,8 +57,8 @@ func newP2PNode(
 	quicConfig := getQuicConfig()
 
 	transport := &quic.Transport{Conn: udpConn}
-	receiver := comms.NewReceiver(transport)
-	sender := comms.NewSender(transport, openReader)
+	receiver := transfer.NewReceiver(transport)
+	sender := transfer.NewSender(transport, openReader)
 
 	return &P2PNode{
 		transport:  transport,
