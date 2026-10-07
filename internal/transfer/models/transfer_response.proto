@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "airlink/internal/transfer/models";
+
+message TransferResponse {
+	uint32 protocol_version = 1;
+
+    bool accepted = 2;
+    optional string reject_reason = 3;
+}
