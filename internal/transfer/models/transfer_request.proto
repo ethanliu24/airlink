@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "airlink/internal/transfer/models";
+
+message TransferRequest {
+	uint32 protocol_version = 1;
+
+	string filename = 2;
+	string extension = 3;
+	uint64 file_size = 4;
+	google.protobuf.Timestamp created_at = 5;
+	google.protobuf.Timestamp modified_at = 6;
+	string mime = 7;
+
+	string sender_ip = 8;
+	string sender_name = 9;
+	string client_name = 10;
+	string client_version = 11;
+}
