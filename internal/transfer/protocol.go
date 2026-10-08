@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Send field data in format [ 4 byte header, length of data ][ data ]
+// Send protobuf schema data in format [ 4 byte header, length of data ][ data ]
 const (
 	msgHeaderLengthBytes = 4
 	maxMessageLengthBytes = 8 * 1024
