@@ -10,8 +10,8 @@ import (
 
 // Send field data in format [ 4 byte header, length of data ][ data ]
 const (
-	MSG_HEADER_LENGTH_BYTES = 4
-	MAX_MESSAGE_LENGTH_BYTES = 8 * 1024
+	msgHeaderLengthBytes = 4
+	maxMessageLengthBytes = 8 * 1024
 )
 
 func messageTooLargeError(length int) error {
@@ -25,13 +25,13 @@ func writeMessage(w io.Writer, msg proto.Message) error {
 		return err
 	}
 
-	if len(data) > MAX_MESSAGE_LENGTH_BYTES {
+	if len(data) > maxMessageLengthBytes {
 		return messageTooLargeError(len(data))
 	}
 
 	// header
 	length := uint32(len(data))
-	header := make([]byte, MSG_HEADER_LENGTH_BYTES)
+	header := make([]byte, msgHeaderLengthBytes)
 	binary.BigEndian.PutUint32(header, length)
 
 	// write
@@ -50,7 +50,7 @@ func writeMessage(w io.Writer, msg proto.Message) error {
 
 func readMessage(r io.Reader, msg proto.Message) error {
 	// header
-	header := make([]byte, MSG_HEADER_LENGTH_BYTES)
+	header := make([]byte, msgHeaderLengthBytes)
 
 	_, err := io.ReadFull(r, header)
 	if err != nil {
@@ -59,13 +59,13 @@ func readMessage(r io.Reader, msg proto.Message) error {
 
 	// parse header
 	length := binary.BigEndian.Uint32(header)
-	if length > MAX_MESSAGE_LENGTH_BYTES {
+	if length > maxMessageLengthBytes {
 		return messageTooLargeError(int(length))
 	}
 
 	// read message
 	data := make([]byte, length)
-	
+
 	_, err = io.ReadFull(r, data)
 	if err != nil {
 		return err

@@ -75,7 +75,7 @@ func TestWriteMessage(t *testing.T) {
 		require.NoError(t, err)
 
 		data := buf.Bytes()
-		require.GreaterOrEqual(t, len(data), MSG_HEADER_LENGTH_BYTES)
+		require.GreaterOrEqual(t, len(data), msgHeaderLengthBytes)
 
 		length := int(data[0])<<24 |
 			int(data[1])<<16 |
@@ -86,20 +86,20 @@ func TestWriteMessage(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, len(expectedData), length)
-		assert.Equal(t, expectedData, data[MSG_HEADER_LENGTH_BYTES:])
+		assert.Equal(t, expectedData, data[msgHeaderLengthBytes:])
 	})
 
 	t.Run("message is too large", func(t *testing.T) {
 		t.Parallel()
 
-		msg := wrapperspb.String(string(make([]byte, MAX_MESSAGE_LENGTH_BYTES)))
+		msg := wrapperspb.String(string(make([]byte, maxMessageLengthBytes)))
 
 		err := writeMessage(io.Discard, msg)
 
 		require.Error(t, err)
 		assert.Equal(
 			t,
-			messageTooLargeError(MAX_MESSAGE_LENGTH_BYTES+3),
+			messageTooLargeError(maxMessageLengthBytes+3),
 			err,
 		)
 	})
@@ -123,7 +123,7 @@ func TestWriteMessage(t *testing.T) {
 		expectedErr := errors.New("data write failed")
 
 		writer := &failAfterNWriter{
-			n:   MSG_HEADER_LENGTH_BYTES,
+			n:   msgHeaderLengthBytes,
 			err: expectedErr,
 		}
 
@@ -206,9 +206,9 @@ func TestReadMessage(t *testing.T) {
 	t.Run("message is too large", func(t *testing.T) {
 		t.Parallel()
 
-		length := uint32(MAX_MESSAGE_LENGTH_BYTES + 1)
+		length := uint32(maxMessageLengthBytes + 1)
 
-		header := make([]byte, MSG_HEADER_LENGTH_BYTES)
+		header := make([]byte, msgHeaderLengthBytes)
 		header[0] = byte(length >> 24)
 		header[1] = byte(length >> 16)
 		header[2] = byte(length >> 8)
@@ -228,7 +228,7 @@ func TestReadMessage(t *testing.T) {
 
 		data := []byte{0xff, 0xff, 0xff}
 
-		header := make([]byte, MSG_HEADER_LENGTH_BYTES)
+		header := make([]byte, msgHeaderLengthBytes)
 		header[3] = byte(len(data))
 
 		buf := bytes.NewBuffer(header)
