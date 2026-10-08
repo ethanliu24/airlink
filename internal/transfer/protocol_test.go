@@ -132,6 +132,14 @@ func TestWriteMessage(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorIs(t, err, expectedErr)
 	})
+
+	t.Run("msg is nil", func(t *testing.T) {
+		t.Parallel()
+
+		err := writeMessage(io.Discard, nil)
+
+		require.Error(t, err)
+	})
 }
 
 func TestReadMessage(t *testing.T) {
@@ -236,6 +244,16 @@ func TestReadMessage(t *testing.T) {
 		require.NoError(t, err)
 
 		err = readMessage(buf, &wrapperspb.StringValue{})
+
+		require.Error(t, err)
+	})
+
+	t.Run("msg is nil", func(t *testing.T) {
+		t.Parallel()
+
+		var buf bytes.Buffer
+
+		err := readMessage(&buf, nil)
 
 		require.Error(t, err)
 	})

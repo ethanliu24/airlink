@@ -14,11 +14,19 @@ const (
 	maxMessageLengthBytes = 8 * 1024
 )
 
+func messageIsNilError(operation string) error {
+	return fmt.Errorf("%s: message is nil", operation)
+}
+
 func messageTooLargeError(length int) error {
 	return fmt.Errorf("message too large: %d bytes", length)
 }
 
 func writeMessage(w io.Writer, msg proto.Message) error {
+	if msg == nil {
+		return messageIsNilError("write protocol")
+	}
+
 	// serialize
 	data, err := proto.Marshal(msg)
 	if err != nil {
@@ -35,12 +43,7 @@ func writeMessage(w io.Writer, msg proto.Message) error {
 	binary.BigEndian.PutUint32(header, length)
 
 	// write
-	_, err = w.Write(header)
-	if err != nil {
-		return err
-	}
-
-	err = writeFull(w, data)
+	err = writeFull(w, header)
 	if err != nil {
 		return err
 	}
@@ -49,6 +52,10 @@ func writeMessage(w io.Writer, msg proto.Message) error {
 }
 
 func readMessage(r io.Reader, msg proto.Message) error {
+	if msg == nil {
+		return messageIsNilError("read protocol")
+	}
+
 	// header
 	header := make([]byte, msgHeaderLengthBytes)
 
