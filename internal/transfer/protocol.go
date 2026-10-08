@@ -40,12 +40,12 @@ func writeMessage(w io.Writer, msg proto.Message) error {
 		return err
 	}
 
-	_, err = w.Write(data)
+	err = writeFull(w, data)
 	if err != nil {
 		return err
 	}
 
-	return nil
+	return writeFull(w, data)
 }
 
 func readMessage(r io.Reader, msg proto.Message) error {
@@ -77,4 +77,21 @@ func readMessage(r io.Reader, msg proto.Message) error {
 	}
 
 	return nil
+}
+
+func writeFull(w io.Writer, data []byte) error {
+    for len(data) > 0 {
+        n, err := w.Write(data)
+        if err != nil {
+            return err
+        }
+
+        if n == 0 {
+            return io.ErrShortWrite
+        }
+
+        data = data[n:]
+    }
+
+    return nil
 }
