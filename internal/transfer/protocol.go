@@ -12,6 +12,9 @@ import (
 const (
 	msgHeaderLengthBytes = 4
 	maxMessageLengthBytes = 8 * 1024
+	senderName = "Bob" // TODO handle this more properly
+	clientName = "airlink" // TODO handle this more properly
+	clientVersion = "0.0.1" // TODO handle this more properly
 )
 
 func messageIsNilError(operation string) error {
@@ -87,18 +90,18 @@ func readMessage(r io.Reader, msg proto.Message) error {
 }
 
 func writeFull(w io.Writer, data []byte) error {
-    for len(data) > 0 {
-        n, err := w.Write(data)
-        if err != nil {
-            return err
-        }
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if err != nil {
+			return err
+		}
 
-        if n == 0 {
-            return io.ErrShortWrite
-        }
+		if n == 0 {
+			return io.ErrShortWrite
+		}
 
-        data = data[n:]
-    }
+		data = data[n:]
+	}
 
-    return nil
+	return nil
 }

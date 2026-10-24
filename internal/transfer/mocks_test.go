@@ -14,6 +14,8 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"os"
+	"testing/fstest"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -137,6 +139,26 @@ func (r *mockReader) Read(p []byte) (int, error) {
 
 func (r *mockReader) Close() error {
 	return nil
+}
+
+func (r *mockReader) Stat() (os.FileInfo, error) {
+	mockFS := fstest.MapFS{
+		"report.txt": &fstest.MapFile{
+			Data: []byte("hello world"),
+			Mode: 0644,
+		},
+	}
+
+	info, err := mockFS.Stat("report.txt")
+	if err != nil {
+		return nil, err
+	}
+
+	return info, nil
+}
+
+func (r *mockReader) Seek(offset int64, whence int) (int64, error) {
+	return 0, nil
 }
 
 func newMockReader(data string) (file.Reader, error) {

@@ -24,7 +24,7 @@ func TestNewSender(t *testing.T) {
 
 	transport := &quic.Transport{}
 
-	sender := NewSender(transport, newMockReader)
+	sender := NewSender(transport, newMockReader, nil)
 
 	require.NotNil(t, sender)
 	require.NotNil(t, sender.dial)

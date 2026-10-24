@@ -22,6 +22,7 @@ type Sender struct {
 	openReader file.OpenReaderFunc
 	mu         sync.Mutex
 	conns      map[string]Conn
+	addr       net.Addr
 }
 
 func (s *Sender) sendOverStream(stream Stream, filename string) error {
@@ -111,7 +112,7 @@ func (s *Sender) Cleanup() {
 	}
 }
 
-func NewSender(transport *quic.Transport, openReader file.OpenReaderFunc) *Sender {
+func NewSender(transport *quic.Transport, openReader file.OpenReaderFunc, addr net.Addr) *Sender {
 	return &Sender{
 		dial: func(ctx context.Context, addr net.Addr, tlsConf *tls.Config, conf *quic.Config) (Conn, error) {
 			conn, err := transport.Dial(ctx, addr, tlsConf, conf)
@@ -125,5 +126,6 @@ func NewSender(transport *quic.Transport, openReader file.OpenReaderFunc) *Sende
 		},
 		conns:      make(map[string]Conn),
 		openReader: openReader,
+		addr:       addr,
 	}
 }
