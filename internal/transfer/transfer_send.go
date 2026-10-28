@@ -22,6 +22,10 @@ const (
 	sendError           sendState = "error"
 )
 
+const (
+	MIME_DETECTION_BUFFER_SIZE_BYTES = 512
+)
+
 type TransferSend struct {
 	state   sendState
 	request *models.TransferRequest
@@ -30,7 +34,8 @@ type TransferSend struct {
 
 // Assume caller will handle opening and closing file
 // This function should only be called once per TransferSend
-func (s *TransferSend) run(reader file.Reader, senderAddr net.Addr) {
+func (s *TransferSend) run(reader file.Reader, senderAddr net.Addr) error {
+	// TODO make sure this function is called once max per TransferSend
 outer:
 	for {
 		switch s.state {
@@ -38,15 +43,20 @@ outer:
 			request, err := initRequest(reader, senderAddr)
 			if err != nil {
 				s.err = err
-				break outer
+				s.state = sendError
+				continue outer
 			}
 
 			s.request = request
 			s.state = sendRequest
 		case sendRequest:
-			return
+			break outer
+		case sendError:
+			break outer
 		}
 	}
+
+	return s.err
 }
 
 func initRequest(reader file.Reader, senderAddr net.Addr) (*models.TransferRequest, error) {
@@ -80,7 +90,7 @@ func initRequest(reader file.Reader, senderAddr net.Addr) (*models.TransferReque
 }
 
 func detectMIME(reader file.Reader) (string, error) {
-	buf := make([]byte, 512) // TODO
+	buf := make([]byte, MIME_DETECTION_BUFFER_SIZE_BYTES)
 
 	n, err := io.ReadFull(reader, buf)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
@@ -90,6 +100,10 @@ func detectMIME(reader file.Reader) (string, error) {
 	_, seekErr := reader.Seek(0, io.SeekStart)
 	if seekErr != nil {
 		return "", seekErr
+	}
+
+	if n == 0 {
+		return "application/octet-stream", nil
 	}
 
 	return http.DetectContentType(buf[:n]), nil
