@@ -12,6 +12,8 @@ const BYTES_TO_READ int = 1024 * 4
 
 type Reader interface {
 	io.ReadCloser
+	Stat() (os.FileInfo, error)
+	Seek(int64, int) (int64, error)
 }
 
 type FileReader struct {
@@ -32,6 +34,18 @@ func (fr *FileReader) Close() error {
 	}
 
 	return fr.file.Close()
+}
+
+func (fr *FileReader) Stat() (os.FileInfo, error) {
+	return fr.file.Stat()
+}
+
+func (fr *FileReader) Seek(offset int64, whence int) (int64, error) {
+    if fr.file == nil {
+        return 0, FileIsNullError
+    }
+
+    return fr.file.Seek(offset, whence)
 }
 
 type OpenReaderFunc func(path string) (Reader, error)
