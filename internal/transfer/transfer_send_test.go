@@ -1,6 +1,8 @@
 package transfer
 
 import (
+	"airlink/internal/transfer/models"
+	"bytes"
 	"errors"
 	"io"
 	"net"
@@ -43,12 +45,12 @@ func (i transferTestFileInfo) Sys() any {
 }
 
 type mockTransferReader struct {
-	data    []byte
-	pos     int
-	stat    os.FileInfo
-	statErr error
-	readErr error
-	seekErr error
+	data     []byte
+	pos      int
+	stat     os.FileInfo
+	statErr  error
+	readErr  error
+	seekErr  error
 	closeErr error
 }
 
@@ -269,6 +271,50 @@ func TestInitRequest(t *testing.T) {
 	})
 }
 
+func TestSendTransferRequest(t *testing.T) {
+	t.Parallel()
+
+	t.Run("transfer is nil", func(t *testing.T) {
+		t.Parallel()
+
+		err := sendTransferRequest(nil, &mockStream{})
+
+		require.Error(t, err)
+	})
+
+	t.Run("request is nil", func(t *testing.T) {
+		t.Parallel()
+
+		transfer := &transferSend{}
+
+		err := sendTransferRequest(transfer, &mockStream{})
+
+		require.Error(t, err)
+	})
+
+	t.Run("stream write fails", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("stream write failed")
+
+		transfer := &transferSend{
+			request: &models.TransferRequest{
+				Filename: "hello.txt",
+			},
+		}
+
+		stream := &mockStream{
+			writeFunc: func([]byte) (int, error) {
+				return 0, expectedErr
+			},
+		}
+
+		err := sendTransferRequest(transfer, stream)
+
+		require.ErrorIs(t, err, expectedErr)
+	})
+}
+
 func TestTransferSendRun(t *testing.T) {
 	t.Parallel()
 
@@ -277,42 +323,91 @@ func TestTransferSendRun(t *testing.T) {
 		Port: 12345,
 	}
 
-	t.Run("initializes request and advances state", func(t *testing.T) {
+	t.Run("sends request and advances to waiting response", func(t *testing.T) {
 		t.Parallel()
 
-		reader := newMockTransferReader(
-			"hello.txt",
-			[]byte("hello"),
-		)
+		reader := newMockTransferReader("hello.txt", []byte("hello"))
 
-		transfer := &TransferSend{
+		var written bytes.Buffer
+		stream := &mockStream{
+			writeFunc: written.Write,
+		}
+
+		sender := &transferSend{
 			state: sendInit,
 		}
 
-		transfer.run(reader, senderAddr)
+		err := sender.run(reader, stream, senderAddr)
 
-		assert.Equal(t, sendRequest, transfer.state)
-		assert.NotNil(t, transfer.request)
-		assert.NoError(t, transfer.err)
-		assert.Equal(t, "hello.txt", transfer.request.GetFilename())
+		require.NoError(t, err)
+		assert.Equal(t, sendWaitingResponse, sender.state)
+		assert.NoError(t, sender.err)
+
+		require.NotNil(t, sender.request)
+		assert.Equal(t, "hello.txt", sender.request.GetFilename())
 		assert.Zero(t, reader.pos)
+		assert.NotZero(t, written.Len())
+
+		// Verify the serialized request written to the stream.
+		received := &models.TransferRequest{}
+		err = readMessage(bytes.NewReader(written.Bytes()), received)
+
+		require.NoError(t, err)
+		assert.Equal(t, sender.request.GetFilename(), received.GetFilename())
+		assert.Equal(t, sender.request.GetFileSize(), received.GetFileSize())
+		assert.Equal(t, sender.request.GetMime(), received.GetMime())
+		assert.Equal(t, sender.request.GetSenderIp(), received.GetSenderIp())
 	})
 
-	t.Run("stops and enters error state when initialization fails", func(t *testing.T) {
+	t.Run("stops when request initialization fails", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("stat failed")
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
 		reader.statErr = expectedErr
 
-		transfer := &TransferSend{
+		writeCalls := 0
+		stream := &mockStream{
+			writeFunc: func([]byte) (int, error) {
+				writeCalls++
+				return 0, nil
+			},
+		}
+
+		sender := &transferSend{
 			state: sendInit,
 		}
 
-		transfer.run(reader, senderAddr)
+		err := sender.run(reader, stream, senderAddr)
 
-		assert.Equal(t, sendError, transfer.state)
-		assert.ErrorIs(t, transfer.err, expectedErr)
-		assert.Nil(t, transfer.request)
+		require.ErrorIs(t, err, expectedErr)
+		assert.Equal(t, sendError, sender.state)
+		assert.ErrorIs(t, sender.err, expectedErr)
+		assert.Nil(t, sender.request)
+		assert.Zero(t, writeCalls)
+	})
+
+	t.Run("stops when sending request fails", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("stream write failed")
+		reader := newMockTransferReader("hello.txt", []byte("hello"))
+
+		stream := &mockStream{
+			writeFunc: func([]byte) (int, error) {
+				return 0, expectedErr
+			},
+		}
+
+		sender := &transferSend{
+			state: sendInit,
+		}
+
+		err := sender.run(reader, stream, senderAddr)
+
+		require.ErrorIs(t, err, expectedErr)
+		assert.Equal(t, sendError, sender.state)
+		assert.ErrorIs(t, sender.err, expectedErr)
+		assert.NotNil(t, sender.request)
 	})
 }
