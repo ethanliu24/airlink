@@ -20,12 +20,13 @@ const (
 	sendWaitingResponse sendState = "waitingResponse"
 	sendRejected        sendState = "rejected"
 	sendSending         sendState = "sending"
-	sendSuccess         sendState = "success"
+	sendDone            sendState = "done"
 	sendError           sendState = "error"
 )
 
 const (
 	mimeDetectionBufferSizeBytes = 512
+	fileReadChunkSizeBytes = 1024 * 64
 )
 
 type transferSend struct {
@@ -88,6 +89,15 @@ outer:
 				s.state = sendRejected
 			}
 		case sendSending:
+			err := s.sendData(reader, stream)
+			if err != nil {
+				sendErr = err
+				s.state = sendError
+				continue outer
+			}
+
+			s.state = sendDone
+		case sendDone:
 			break outer
 		case sendRejected:
 			break outer
@@ -97,9 +107,9 @@ outer:
 	}
 
 	return &sendResult{
-		Accepted: accepted,
+		Accepted:     accepted,
 		RejectReason: rejectReason,
-		Err: sendErr,
+		Err:          sendErr,
 	}
 }
 
@@ -186,6 +196,30 @@ func (s *transferSend) recieveTransferResponse(stream Stream) error {
 	err := readMessage(stream, s.response)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (s *transferSend) sendData(reader file.Reader, stream Stream) error {
+	buf := make([]byte, fileReadChunkSizeBytes)
+	for {
+		bytesRead, err := reader.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+
+			return err
+		}
+
+		if bytesRead > 0 {
+			_, err := stream.Write(buf[:bytesRead])
+
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
