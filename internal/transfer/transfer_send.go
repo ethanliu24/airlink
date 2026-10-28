@@ -3,6 +3,7 @@ package transfer
 import (
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -23,18 +24,19 @@ const (
 )
 
 const (
-	MIME_DETECTION_BUFFER_SIZE_BYTES = 512
+	mimeDetectionBufferSizeBytes = 512
 )
 
-type TransferSend struct {
+type transferSend struct {
 	state   sendState
 	request *models.TransferRequest
 	err     error
 }
 
-// Assume caller will handle opening and closing file
+// Assume caller will handle opening and closing the file and stream
+// This should run synchronously
 // This function should only be called once per TransferSend
-func (s *TransferSend) run(reader file.Reader, senderAddr net.Addr) error {
+func (s *transferSend) run(reader file.Reader, stream Stream, senderAddr net.Addr) error {
 	// TODO make sure this function is called once max per TransferSend
 outer:
 	for {
@@ -50,6 +52,15 @@ outer:
 			s.request = request
 			s.state = sendRequest
 		case sendRequest:
+			err := sendTransferRequest(s, stream)
+			if err != nil {
+				s.err = err
+				s.state = sendError
+				continue outer
+			}
+
+			s.state = sendWaitingResponse
+		case sendWaitingResponse:
 			break outer
 		case sendError:
 			break outer
@@ -89,8 +100,25 @@ func initRequest(reader file.Reader, senderAddr net.Addr) (*models.TransferReque
 	}, nil
 }
 
+func sendTransferRequest(s *transferSend, stream Stream) error {
+	if s == nil {
+		return fmt.Errorf("<s> transferSend is NULL")
+	}
+
+	if s.request == nil {
+		return fmt.Errorf("request is NULL when sending transfer request")
+	}
+
+	err := writeMessage(stream, s.request)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func detectMIME(reader file.Reader) (string, error) {
-	buf := make([]byte, MIME_DETECTION_BUFFER_SIZE_BYTES)
+	buf := make([]byte, mimeDetectionBufferSizeBytes)
 
 	n, err := io.ReadFull(reader, buf)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
