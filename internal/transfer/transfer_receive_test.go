@@ -629,3 +629,36 @@ func TestReceiveData(t *testing.T) {
 		assert.Equal(t, len(data), totalBytesRead)
 	})
 }
+
+func TestNewTransferReceive(t *testing.T) {
+	t.Parallel()
+
+	t.Run("initializes receiver with stream", func(t *testing.T) {
+		t.Parallel()
+
+		stream := &receiveTestStream{}
+
+		receiver := NewTransferReceive(stream)
+
+		require.NotNil(t, receiver)
+		assert.Equal(t, receiveInit, receiver.state)
+		assert.Same(t, stream, receiver.stream)
+		assert.False(t, receiver.consumed)
+
+		require.NotNil(t, receiver.request)
+		assert.Empty(t, receiver.request.GetFilename())
+		assert.Nil(t, receiver.response)
+	})
+
+	t.Run("accepts nil stream", func(t *testing.T) {
+		t.Parallel()
+
+		receiver := NewTransferReceive(nil)
+
+		require.NotNil(t, receiver)
+		assert.Equal(t, receiveInit, receiver.state)
+		assert.Nil(t, receiver.stream)
+		assert.False(t, receiver.consumed)
+		require.NotNil(t, receiver.request)
+	})
+}

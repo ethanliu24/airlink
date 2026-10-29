@@ -140,7 +140,7 @@ func (r *transferReceive) processResponse() (*models.TransferResponse, error) {
 	}
 
 	return &models.TransferResponse{
-		Accepted: true,
+		Accepted:     true,
 		RejectReason: nil,
 	}, nil
 }
@@ -191,4 +191,13 @@ func (r *transferReceive) receiveData() (int, error) {
 	}
 
 	return totalBytesRead, nil
+}
+
+func NewTransferReceive(stream Stream) *transferReceive {
+	return &transferReceive{
+		state:    receiveInit,
+		request:  &models.TransferRequest{},
+		stream:   stream,
+		consumed: false,
+	}
 }
