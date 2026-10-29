@@ -130,7 +130,6 @@ func TestNewTransferReceive(t *testing.T) {
 		require.NotNil(t, receiver)
 		assert.Equal(t, receiveInit, receiver.state)
 		assert.Same(t, stream, receiver.stream)
-		assert.False(t, receiver.consumed)
 		require.NotNil(t, receiver.request)
 		assert.Nil(t, receiver.response)
 	})
@@ -143,7 +142,6 @@ func TestNewTransferReceive(t *testing.T) {
 		require.NotNil(t, receiver)
 		assert.Equal(t, receiveInit, receiver.state)
 		assert.Nil(t, receiver.stream)
-		assert.False(t, receiver.consumed)
 		require.NotNil(t, receiver.request)
 	})
 }
@@ -175,7 +173,6 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.NoError(t, result.Err)
 
 		assert.Equal(t, receiveDone, receiver.state)
-		assert.True(t, receiver.consumed)
 
 		require.NotNil(t, result.Request)
 		assert.Equal(t, expected.GetFilename(), result.Request.GetFilename())
@@ -290,37 +287,6 @@ func TestTransferReceiveRun(t *testing.T) {
 		assert.NotNil(t, result.Response)
 	})
 
-	t.Run("rejects a second invocation", func(t *testing.T) {
-		t.Parallel()
-
-		request := &models.TransferRequest{
-			Filename: "hello.txt",
-			FileSize: 5,
-		}
-
-		stream := &receiveTestStream{
-			reader: newReceiveInput(t, request, []byte("hello")),
-		}
-
-		receiver := NewTransferReceive(stream)
-
-		firstResult := receiver.run()
-
-		require.NoError(t, firstResult.Err)
-		assert.Equal(t, receiveDone, receiver.state)
-
-		readCalls := stream.readCalls
-		writeCalls := stream.writeCalls
-
-		secondResult := receiver.run()
-
-		require.NotNil(t, secondResult)
-		require.ErrorContains(t, secondResult.Err, "already called")
-		assert.Equal(t, receiveError, receiver.state)
-		assert.Equal(t, readCalls, stream.readCalls)
-		assert.Equal(t, writeCalls, stream.writeCalls)
-	})
-
 	t.Run("stops when already done", func(t *testing.T) {
 		t.Parallel()
 
@@ -334,7 +300,6 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
 		assert.Equal(t, receiveDone, receiver.state)
-		assert.True(t, receiver.consumed)
 	})
 
 	t.Run("handles invalid state", func(t *testing.T) {

@@ -31,7 +31,6 @@ type transferReceive struct {
 	response        *models.TransferResponse
 	stream          Stream
 	destinationPath string
-	consumed        bool
 }
 
 type receiveResult struct {
@@ -46,13 +45,6 @@ type receiveResult struct {
 // Assumes transferReceive is properly initialized
 func (r *transferReceive) run() *receiveResult {
 	var receiveErr error
-
-	if r.consumed {
-		receiveErr = fmt.Errorf("<run> already called on a transferReceive")
-		r.state = receiveError
-	}
-
-	r.consumed = true
 
 outer:
 	for {
@@ -224,6 +216,5 @@ func NewTransferReceive(stream Stream) *transferReceive {
 		state:    receiveInit,
 		request:  &models.TransferRequest{},
 		stream:   stream,
-		consumed: false,
 	}
 }
