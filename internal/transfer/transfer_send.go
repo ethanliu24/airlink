@@ -44,7 +44,6 @@ type sendResult struct {
 	Err          error
 }
 
-// Assume caller will handle opening and closing the file and stream
 // This should run synchronously
 // This function should only be called once per TransferSend
 // Assumes transferSend is properly initialized
@@ -101,9 +100,7 @@ outer:
 			}
 
 			s.state = sendDone
-		case sendDone:
-		case sendRejected:
-		case sendError:
+		case sendDone, sendRejected, sendError:
 			break outer
 		default:
 			sendErr = fmt.Errorf("invalid transfer send state: %q", s.state)
@@ -225,28 +222,16 @@ func (s *transferSend) sendData() error {
 	}
 
 	buf := make([]byte, fileReadChunkSizeBytes)
-	for {
-		bytesRead, err := s.reader.Read(buf)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
 
-			return err
-		}
-
-		if bytesRead > 0 {
-			_, err := s.stream.Write(buf[:bytesRead])
-
-			if err != nil {
-				return err
-			}
-		}
+	_, err := io.CopyBuffer(s.stream, s.reader, buf)
+	if err != nil {
+		return fmt.Errorf("failed to send file data: %w", err)
 	}
 
 	return nil
 }
 
+// Assume caller will handle opening and closing the file and stream
 func NewTransferSend(reader file.Reader, stream Stream, senderAddr net.Addr) *transferSend {
 	return &transferSend{
 		state: sendInit,
