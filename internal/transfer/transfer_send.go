@@ -26,13 +26,16 @@ const (
 
 const (
 	mimeDetectionBufferSizeBytes = 512
-	fileReadChunkSizeBytes = 1024 * 64
+	fileReadChunkSizeBytes       = 1024 * 64
 )
 
 type transferSend struct {
-	state    sendState
-	request  *models.TransferRequest
-	response *models.TransferResponse
+	state      sendState
+	request    *models.TransferRequest
+	response   *models.TransferResponse
+	reader     file.Reader
+	stream     Stream
+	senderAddr net.Addr
 }
 
 type sendResult struct {
@@ -44,7 +47,8 @@ type sendResult struct {
 // Assume caller will handle opening and closing the file and stream
 // This should run synchronously
 // This function should only be called once per TransferSend
-func (s *transferSend) run(reader file.Reader, stream Stream, senderAddr net.Addr) *sendResult {
+// Assumes transferSend is properly initialized
+func (s *transferSend) run() *sendResult {
 	// TODO make sure this function is called once max per TransferSend
 	var accepted bool
 	var rejectReason *string
@@ -54,7 +58,7 @@ outer:
 	for {
 		switch s.state {
 		case sendInit:
-			request, err := initRequest(reader, senderAddr)
+			request, err := s.initRequest()
 			if err != nil {
 				sendErr = err
 				s.state = sendError
@@ -64,7 +68,7 @@ outer:
 			s.request = request
 			s.state = sendRequest
 		case sendRequest:
-			err := s.sendTransferRequest(stream)
+			err := s.sendTransferRequest()
 			if err != nil {
 				sendErr = err
 				s.state = sendError
@@ -73,7 +77,7 @@ outer:
 
 			s.state = sendWaitingResponse
 		case sendWaitingResponse:
-			err := s.recieveTransferResponse(stream)
+			err := s.recieveTransferResponse()
 			if err != nil {
 				sendErr = err
 				s.state = sendError
@@ -89,7 +93,7 @@ outer:
 				s.state = sendRejected
 			}
 		case sendSending:
-			err := s.sendData(reader, stream)
+			err := s.sendData()
 			if err != nil {
 				sendErr = err
 				s.state = sendError
@@ -98,11 +102,13 @@ outer:
 
 			s.state = sendDone
 		case sendDone:
-			break outer
 		case sendRejected:
-			break outer
 		case sendError:
 			break outer
+		default:
+			sendErr = fmt.Errorf("invalid transfer send state: %q", s.state)
+			s.state = sendError
+			continue outer
 		}
 	}
 
@@ -113,18 +119,26 @@ outer:
 	}
 }
 
-func initRequest(reader file.Reader, senderAddr net.Addr) (*models.TransferRequest, error) {
-	stat, err := reader.Stat()
+func (s *transferSend) initRequest() (*models.TransferRequest, error) {
+	if s.state != sendInit {
+		return nil, fmt.Errorf(
+			"transferSend state is not %s in initRequest, got: %s",
+			sendInit,
+			s.state,
+		)
+	}
+
+	stat, err := s.reader.Stat()
 	if err != nil {
 		return nil, err
 	}
 
-	mimeType, err := detectMIME(reader)
+	mimeType, err := s.detectMIME()
 	if err != nil {
 		return nil, err
 	}
 
-	host, _, err := net.SplitHostPort(senderAddr.String())
+	host, _, err := net.SplitHostPort(s.senderAddr.String())
 	if err != nil {
 		return nil, err
 	}
@@ -143,15 +157,15 @@ func initRequest(reader file.Reader, senderAddr net.Addr) (*models.TransferReque
 	}, nil
 }
 
-func detectMIME(reader file.Reader) (string, error) {
+func (s *transferSend) detectMIME() (string, error) {
 	buf := make([]byte, mimeDetectionBufferSizeBytes)
 
-	n, err := io.ReadFull(reader, buf)
+	n, err := io.ReadFull(s.reader, buf)
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return "", err
 	}
 
-	_, seekErr := reader.Seek(0, io.SeekStart)
+	_, seekErr := s.reader.Seek(0, io.SeekStart)
 	if seekErr != nil {
 		return "", seekErr
 	}
@@ -163,16 +177,16 @@ func detectMIME(reader file.Reader) (string, error) {
 	return http.DetectContentType(buf[:n]), nil
 }
 
-func (s *transferSend) sendTransferRequest(stream Stream) error {
-	if s == nil {
-		return fmt.Errorf("<s> transferSend is NULL")
+func (s *transferSend) sendTransferRequest() error {
+	if s.state != sendRequest {
+		return fmt.Errorf(
+			"transferSend state is not %s in sendTransferRequest, got: %s",
+			sendRequest,
+			s.state,
+		)
 	}
 
-	if s.request == nil {
-		return fmt.Errorf("request is NULL when sending transfer request")
-	}
-
-	err := writeMessage(stream, s.request)
+	err := writeMessage(s.stream, s.request)
 	if err != nil {
 		return err
 	}
@@ -180,7 +194,7 @@ func (s *transferSend) sendTransferRequest(stream Stream) error {
 	return nil
 }
 
-func (s *transferSend) recieveTransferResponse(stream Stream) error {
+func (s *transferSend) recieveTransferResponse() error {
 	if s.state != sendWaitingResponse {
 		return fmt.Errorf(
 			"transferSend state is not %s in recieveTransferResponse, got: %s",
@@ -193,7 +207,7 @@ func (s *transferSend) recieveTransferResponse(stream Stream) error {
 		return fmt.Errorf("transferSend response not initialized in recieveTransferResponse")
 	}
 
-	err := readMessage(stream, s.response)
+	err := readMessage(s.stream, s.response)
 	if err != nil {
 		return err
 	}
@@ -201,10 +215,18 @@ func (s *transferSend) recieveTransferResponse(stream Stream) error {
 	return nil
 }
 
-func (s *transferSend) sendData(reader file.Reader, stream Stream) error {
+func (s *transferSend) sendData() error {
+	if s.state != sendSending {
+		return fmt.Errorf(
+			"transferSend state is not %s in sendData, got: %s",
+			sendSending,
+			s.state,
+		)
+	}
+
 	buf := make([]byte, fileReadChunkSizeBytes)
 	for {
-		bytesRead, err := reader.Read(buf)
+		bytesRead, err := s.reader.Read(buf)
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -214,7 +236,7 @@ func (s *transferSend) sendData(reader file.Reader, stream Stream) error {
 		}
 
 		if bytesRead > 0 {
-			_, err := stream.Write(buf[:bytesRead])
+			_, err := s.stream.Write(buf[:bytesRead])
 
 			if err != nil {
 				return err
@@ -224,3 +246,4 @@ func (s *transferSend) sendData(reader file.Reader, stream Stream) error {
 
 	return nil
 }
+
