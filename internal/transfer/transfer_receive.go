@@ -22,7 +22,7 @@ const (
 )
 
 const (
-	defaultDestinationDir = "tmp"
+	defaultDestinationDir = "../../tmp"
 )
 
 type transferReceive struct {
