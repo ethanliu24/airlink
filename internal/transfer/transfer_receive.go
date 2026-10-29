@@ -2,7 +2,9 @@ package transfer
 
 import (
 	"airlink/internal/transfer/models"
+	"errors"
 	"fmt"
+	"io"
 )
 
 type receiveState string
@@ -80,7 +82,14 @@ outer:
 
 			r.state = receiveReceiving
 		case receiveReceiving:
-			break outer
+			_, err := r.receiveData()
+			if err != nil {
+				receiveErr = err
+				r.state = receiveError
+				continue outer
+			}
+
+			r.state = receiveDone
 		case receiveDone, receiveError:
 			break outer
 		default:
@@ -120,6 +129,7 @@ func (r *transferReceive) ingestRequst() error {
 }
 
 // TODO always accept for now, figure out how to get data from user
+// TODO return detination too
 func (r *transferReceive) processResponse() (*models.TransferResponse, error) {
 	if r.state != receiveProcessingRequest {
 		return nil, fmt.Errorf(
@@ -150,4 +160,35 @@ func (r *transferReceive) sendResponse() error {
 	}
 
 	return nil
+}
+
+func (r *transferReceive) receiveData() (int, error) {
+	if r.state != receiveReceiving {
+		return 0, fmt.Errorf(
+			"transferReceive state is not %s in receiveData, got: %s",
+			receiveReceiving,
+			r.state,
+		)
+	}
+
+	totalBytesRead := 0
+	buf := make([]byte, RECEIVER_BUFFER_SIZE_BYTES)
+
+	for {
+		n, err := r.stream.Read(buf)
+		totalBytesRead += n
+
+		// TODO stream the file in destination
+		fmt.Printf("%s", string(buf[:n]))
+
+		if errors.Is(err, io.EOF) {
+			break
+		}
+
+		if err != nil {
+			return totalBytesRead, err
+		}
+	}
+
+	return totalBytesRead, nil
 }
