@@ -119,6 +119,74 @@ func (r *mockTransferReader) Close() error {
 	return r.closeErr
 }
 
+// Fails on reads after MIME detection has rewound the reader.
+// This lets the full state machine reach sendSending before failing.
+type failAfterRewindReader struct {
+	*mockTransferReader
+	err      error
+	rewound  bool
+}
+
+func (r *failAfterRewindReader) Read(p []byte) (int, error) {
+	if r.rewound {
+		return 0, r.err
+	}
+
+	return r.mockTransferReader.Read(p)
+}
+
+func (r *failAfterRewindReader) Seek(offset int64, whence int) (int64, error) {
+	n, err := r.mockTransferReader.Seek(offset, whence)
+	if err == nil && offset == 0 && whence == io.SeekStart {
+		r.rewound = true
+	}
+
+	return n, err
+}
+
+type transferTestStream struct {
+	readFrom    io.Reader
+	readErr     error
+	writeErr    error
+	failWriteAt int
+	writeCalls  int
+	written     bytes.Buffer
+}
+
+func (s *transferTestStream) Read(p []byte) (int, error) {
+	if s.readErr != nil {
+		return 0, s.readErr
+	}
+
+	if s.readFrom != nil {
+		return s.readFrom.Read(p)
+	}
+
+	return 0, io.EOF
+}
+
+func (s *transferTestStream) Write(p []byte) (int, error) {
+	s.writeCalls++
+
+	if s.failWriteAt > 0 && s.writeCalls >= s.failWriteAt {
+		if s.writeErr != nil {
+			return 0, s.writeErr
+		}
+
+		return 0, errors.New("mock stream write failed")
+	}
+
+	if s.failWriteAt == 0 && s.writeErr != nil {
+		return 0, s.writeErr
+	}
+
+	return s.written.Write(p)
+}
+
+func (s *transferTestStream) Close() error {
+	return nil
+}
+
 func newTransferResponseReader(
 	t *testing.T,
 	response *models.TransferResponse,
@@ -131,6 +199,17 @@ func newTransferResponseReader(
 	return bytes.NewReader(buf.Bytes())
 }
 
+func newTestSender(reader *mockTransferReader) *transferSend {
+	return NewTransferSend(
+		reader,
+		&transferTestStream{},
+		&net.UDPAddr{
+			IP:   net.ParseIP("192.0.2.10"),
+			Port: 12345,
+		},
+	)
+}
+
 func TestDetectMIME(t *testing.T) {
 	t.Parallel()
 
@@ -141,8 +220,9 @@ func TestDetectMIME(t *testing.T) {
 			0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A,
 		}
 		reader := newMockTransferReader("picture.png", data)
+		sender := newTestSender(reader)
 
-		mimeType, err := detectMIME(reader)
+		mimeType, err := sender.detectMIME()
 
 		require.NoError(t, err)
 		assert.Equal(t, "image/png", mimeType)
@@ -153,8 +233,9 @@ func TestDetectMIME(t *testing.T) {
 		t.Parallel()
 
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
+		sender := newTestSender(reader)
 
-		mimeType, err := detectMIME(reader)
+		mimeType, err := sender.detectMIME()
 
 		require.NoError(t, err)
 		assert.Equal(t, "text/plain; charset=utf-8", mimeType)
@@ -165,34 +246,37 @@ func TestDetectMIME(t *testing.T) {
 		t.Parallel()
 
 		reader := newMockTransferReader("empty", nil)
+		sender := newTestSender(reader)
 
-		mimeType, err := detectMIME(reader)
+		mimeType, err := sender.detectMIME()
 
 		require.NoError(t, err)
 		assert.Equal(t, "application/octet-stream", mimeType)
 		assert.Zero(t, reader.pos)
 	})
 
-	t.Run("read error", func(t *testing.T) {
+	t.Run("propagates read error", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("read failed")
 		reader := newMockTransferReader("picture.png", []byte("data"))
 		reader.readErr = expectedErr
+		sender := newTestSender(reader)
 
-		_, err := detectMIME(reader)
+		_, err := sender.detectMIME()
 
 		require.ErrorIs(t, err, expectedErr)
 	})
 
-	t.Run("seek error", func(t *testing.T) {
+	t.Run("propagates seek error", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("seek failed")
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
 		reader.seekErr = expectedErr
+		sender := newTestSender(reader)
 
-		_, err := detectMIME(reader)
+		_, err := sender.detectMIME()
 
 		require.ErrorIs(t, err, expectedErr)
 	})
@@ -213,8 +297,9 @@ func TestInitRequest(t *testing.T) {
 			0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A,
 		}
 		reader := newMockTransferReader("picture.png", data)
+		sender := NewTransferSend(reader, &transferTestStream{}, senderAddr)
 
-		request, err := initRequest(reader, senderAddr)
+		request, err := sender.initRequest()
 
 		require.NoError(t, err)
 		require.NotNil(t, request)
@@ -238,41 +323,56 @@ func TestInitRequest(t *testing.T) {
 		assert.Zero(t, reader.pos)
 	})
 
-	t.Run("stat error", func(t *testing.T) {
+	t.Run("rejects invalid state", func(t *testing.T) {
+		t.Parallel()
+
+		sender := newTestSender(newMockTransferReader("report.txt", []byte("data")))
+		sender.state = sendRequest
+
+		request, err := sender.initRequest()
+
+		require.Error(t, err)
+		assert.Nil(t, request)
+	})
+
+	t.Run("propagates stat error", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("stat failed")
 		reader := newMockTransferReader("picture.png", []byte("data"))
 		reader.statErr = expectedErr
+		sender := NewTransferSend(reader, &transferTestStream{}, senderAddr)
 
-		request, err := initRequest(reader, senderAddr)
+		request, err := sender.initRequest()
 
 		require.ErrorIs(t, err, expectedErr)
 		assert.Nil(t, request)
 	})
 
-	t.Run("MIME detection error", func(t *testing.T) {
+	t.Run("propagates MIME detection error", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("read failed")
 		reader := newMockTransferReader("picture.png", []byte("data"))
 		reader.readErr = expectedErr
+		sender := NewTransferSend(reader, &transferTestStream{}, senderAddr)
 
-		request, err := initRequest(reader, senderAddr)
+		request, err := sender.initRequest()
 
 		require.ErrorIs(t, err, expectedErr)
 		assert.Nil(t, request)
 	})
 
-	t.Run("invalid sender address", func(t *testing.T) {
+	t.Run("rejects invalid sender address", func(t *testing.T) {
 		t.Parallel()
 
 		reader := newMockTransferReader("picture.png", []byte("data"))
 		invalidAddr := &net.IPAddr{
 			IP: net.ParseIP("192.0.2.10"),
 		}
+		sender := NewTransferSend(reader, &transferTestStream{}, invalidAddr)
 
-		request, err := initRequest(reader, invalidAddr)
+		request, err := sender.initRequest()
 
 		require.Error(t, err)
 		assert.Nil(t, request)
@@ -283,44 +383,35 @@ func TestInitRequest(t *testing.T) {
 func TestSendTransferRequest(t *testing.T) {
 	t.Parallel()
 
-	t.Run("transfer is nil", func(t *testing.T) {
+	t.Run("rejects invalid state", func(t *testing.T) {
 		t.Parallel()
 
-		var sender *transferSend
+		sender := newTestSender(newMockTransferReader("hello.txt", []byte("hello")))
 
-		err := sender.sendTransferRequest(&mockStream{})
+		err := sender.sendTransferRequest()
 
 		require.Error(t, err)
 	})
 
-	t.Run("request is nil", func(t *testing.T) {
-		t.Parallel()
-
-		sender := &transferSend{}
-
-		err := sender.sendTransferRequest(&mockStream{})
-
-		require.Error(t, err)
-	})
-
-	t.Run("stream write fails", func(t *testing.T) {
+	t.Run("propagates stream write error", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("stream write failed")
-
-		sender := &transferSend{
-			request: &models.TransferRequest{
-				Filename: "hello.txt",
-			},
+		stream := &transferTestStream{
+			writeErr: expectedErr,
+		}
+		sender := NewTransferSend(
+			newMockTransferReader("hello.txt", []byte("hello")),
+			stream,
+			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
+		)
+		sender.state = sendRequest
+		sender.request = &models.TransferRequest{
+			Filename: "hello.txt",
+			FileSize: 5,
 		}
 
-		stream := &mockStream{
-			writeFunc: func([]byte) (int, error) {
-				return 0, expectedErr
-			},
-		}
-
-		err := sender.sendTransferRequest(stream)
+		err := sender.sendTransferRequest()
 
 		require.ErrorIs(t, err, expectedErr)
 	})
@@ -328,25 +419,26 @@ func TestSendTransferRequest(t *testing.T) {
 	t.Run("writes request successfully", func(t *testing.T) {
 		t.Parallel()
 
-		sender := &transferSend{
-			request: &models.TransferRequest{
-				Filename: "hello.txt",
-				FileSize: 5,
-			},
+		stream := &transferTestStream{}
+		sender := NewTransferSend(
+			newMockTransferReader("hello.txt", []byte("hello")),
+			stream,
+			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
+		)
+		sender.state = sendRequest
+		sender.request = &models.TransferRequest{
+			Filename: "hello.txt",
+			FileSize: 5,
 		}
 
-		var written bytes.Buffer
-		stream := &mockStream{
-			writeFunc: written.Write,
-		}
-
-		err := sender.sendTransferRequest(stream)
+		err := sender.sendTransferRequest()
 
 		require.NoError(t, err)
 
 		received := &models.TransferRequest{}
-		require.NoError(t, readMessage(bytes.NewReader(written.Bytes()), received))
+		err = readMessage(bytes.NewReader(stream.written.Bytes()), received)
 
+		require.NoError(t, err)
 		assert.Equal(t, sender.request.GetFilename(), received.GetFilename())
 		assert.Equal(t, sender.request.GetFileSize(), received.GetFileSize())
 	})
@@ -355,27 +447,25 @@ func TestSendTransferRequest(t *testing.T) {
 func TestRecieveTransferResponse(t *testing.T) {
 	t.Parallel()
 
-	t.Run("rejects an invalid state", func(t *testing.T) {
+	t.Run("rejects invalid state", func(t *testing.T) {
 		t.Parallel()
 
-		sender := &transferSend{
-			state:    sendInit,
-			response: &models.TransferResponse{},
-		}
+		sender := newTestSender(newMockTransferReader("hello.txt", []byte("hello")))
+		sender.response = &models.TransferResponse{}
 
-		err := sender.recieveTransferResponse(&mockStream{})
+		err := sender.recieveTransferResponse()
 
 		require.Error(t, err)
 	})
 
-	t.Run("rejects an uninitialized response", func(t *testing.T) {
+	t.Run("rejects uninitialized response", func(t *testing.T) {
 		t.Parallel()
 
-		sender := &transferSend{
-			state: sendWaitingResponse,
-		}
+		sender := newTestSender(newMockTransferReader("hello.txt", []byte("hello")))
+		sender.state = sendWaitingResponse
+		sender.response = nil
 
-		err := sender.recieveTransferResponse(&mockStream{})
+		err := sender.recieveTransferResponse()
 
 		require.Error(t, err)
 	})
@@ -387,17 +477,15 @@ func TestRecieveTransferResponse(t *testing.T) {
 			t,
 			&models.TransferResponse{Accepted: true},
 		)
+		stream := &transferTestStream{readFrom: responseReader}
+		sender := NewTransferSend(
+			newMockTransferReader("hello.txt", []byte("hello")),
+			stream,
+			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
+		)
+		sender.state = sendWaitingResponse
 
-		sender := &transferSend{
-			state:    sendWaitingResponse,
-			response: &models.TransferResponse{},
-		}
-
-		stream := &mockStream{
-			readFunc: responseReader.Read,
-		}
-
-		err := sender.recieveTransferResponse(stream)
+		err := sender.recieveTransferResponse()
 
 		require.NoError(t, err)
 		assert.True(t, sender.response.GetAccepted())
@@ -414,17 +502,15 @@ func TestRecieveTransferResponse(t *testing.T) {
 				RejectReason: &reason,
 			},
 		)
+		stream := &transferTestStream{readFrom: responseReader}
+		sender := NewTransferSend(
+			newMockTransferReader("hello.txt", []byte("hello")),
+			stream,
+			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
+		)
+		sender.state = sendWaitingResponse
 
-		sender := &transferSend{
-			state:    sendWaitingResponse,
-			response: &models.TransferResponse{},
-		}
-
-		stream := &mockStream{
-			readFunc: responseReader.Read,
-		}
-
-		err := sender.recieveTransferResponse(stream)
+		err := sender.recieveTransferResponse()
 
 		require.NoError(t, err)
 		assert.False(t, sender.response.GetAccepted())
@@ -436,19 +522,15 @@ func TestRecieveTransferResponse(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("stream read failed")
+		stream := &transferTestStream{readErr: expectedErr}
+		sender := NewTransferSend(
+			newMockTransferReader("hello.txt", []byte("hello")),
+			stream,
+			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
+		)
+		sender.state = sendWaitingResponse
 
-		sender := &transferSend{
-			state:    sendWaitingResponse,
-			response: &models.TransferResponse{},
-		}
-
-		stream := &mockStream{
-			readFunc: func([]byte) (int, error) {
-				return 0, expectedErr
-			},
-		}
-
-		err := sender.recieveTransferResponse(stream)
+		err := sender.recieveTransferResponse()
 
 		require.ErrorIs(t, err, expectedErr)
 	})
@@ -460,27 +542,24 @@ func TestSendData(t *testing.T) {
 	t.Run("sends complete file contents", func(t *testing.T) {
 		t.Parallel()
 
-		// Larger than one buffer to verify multiple reads and writes.
-		data := bytes.Repeat([]byte{0x00, 0x01, 0xFE, 0xFF}, fileReadChunkSizeBytes/4+10)
+		data := bytes.Repeat(
+			[]byte{0x00, 0x01, 0xFE, 0xFF},
+			fileReadChunkSizeBytes/4+10,
+		)
 		reader := newMockTransferReader("binary.dat", data)
+		stream := &transferTestStream{}
+		sender := NewTransferSend(
+			reader,
+			stream,
+			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
+		)
+		sender.state = sendSending
 
-		var written bytes.Buffer
-		writeCalls := 0
-
-		stream := &mockStream{
-			writeFunc: func(p []byte) (int, error) {
-				writeCalls++
-				return written.Write(p)
-			},
-		}
-
-		sender := &transferSend{}
-
-		err := sender.sendData(reader, stream)
+		err := sender.sendData()
 
 		require.NoError(t, err)
-		assert.Equal(t, data, written.Bytes())
-		assert.Greater(t, writeCalls, 1)
+		assert.Equal(t, data, stream.written.Bytes())
+		assert.Greater(t, stream.writeCalls, 1)
 		assert.Equal(t, len(data), reader.pos)
 	})
 
@@ -488,58 +567,63 @@ func TestSendData(t *testing.T) {
 		t.Parallel()
 
 		reader := newMockTransferReader("empty", nil)
-		writeCalls := 0
+		stream := &transferTestStream{}
+		sender := NewTransferSend(
+			reader,
+			stream,
+			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
+		)
+		sender.state = sendSending
 
-		stream := &mockStream{
-			writeFunc: func(p []byte) (int, error) {
-				writeCalls++
-				return len(p), nil
-			},
-		}
-
-		sender := &transferSend{}
-
-		err := sender.sendData(reader, stream)
+		err := sender.sendData()
 
 		require.NoError(t, err)
-		assert.Zero(t, writeCalls)
+		assert.Zero(t, stream.writeCalls)
+		assert.Empty(t, stream.written.Bytes())
 	})
 
-	t.Run("reader error", func(t *testing.T) {
+	t.Run("rejects invalid state", func(t *testing.T) {
+		t.Parallel()
+
+		sender := newTestSender(newMockTransferReader("hello.txt", []byte("hello")))
+
+		err := sender.sendData()
+
+		require.Error(t, err)
+	})
+
+	t.Run("propagates reader error", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("file read failed")
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
 		reader.readErr = expectedErr
+		sender := NewTransferSend(
+			reader,
+			&transferTestStream{},
+			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
+		)
+		sender.state = sendSending
 
-		stream := &mockStream{
-			writeFunc: func(p []byte) (int, error) {
-				return len(p), nil
-			},
-		}
-
-		sender := &transferSend{}
-
-		err := sender.sendData(reader, stream)
+		err := sender.sendData()
 
 		require.ErrorIs(t, err, expectedErr)
 	})
 
-	t.Run("stream write error", func(t *testing.T) {
+	t.Run("propagates stream write error", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("stream write failed")
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
+		stream := &transferTestStream{writeErr: expectedErr}
+		sender := NewTransferSend(
+			reader,
+			stream,
+			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
+		)
+		sender.state = sendSending
 
-		stream := &mockStream{
-			writeFunc: func([]byte) (int, error) {
-				return 0, expectedErr
-			},
-		}
-
-		sender := &transferSend{}
-
-		err := sender.sendData(reader, stream)
+		err := sender.sendData()
 
 		require.ErrorIs(t, err, expectedErr)
 	})
@@ -562,32 +646,20 @@ func TestTransferSendRun(t *testing.T) {
 			t,
 			&models.TransferResponse{Accepted: true},
 		)
+		stream := &transferTestStream{readFrom: responseReader}
+		sender := NewTransferSend(reader, stream, senderAddr)
 
-		var written bytes.Buffer
-		stream := &mockStream{
-			writeFunc: written.Write,
-			readFunc:  responseReader.Read,
-		}
-
-		sender := &transferSend{
-			state:    sendInit,
-			response: &models.TransferResponse{},
-		}
-
-		result := sender.run(reader, stream, senderAddr)
+		result := sender.run()
 
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
 		assert.True(t, result.Accepted)
 		assert.Nil(t, result.RejectReason)
 		assert.Equal(t, sendDone, sender.state)
-
-		require.NotNil(t, sender.request)
-		assert.Equal(t, "hello.txt", sender.request.GetFilename())
 		assert.Equal(t, len(fileData), reader.pos)
 
-		// The stream contains a framed protobuf request followed by raw file bytes.
-		out := bytes.NewReader(written.Bytes())
+		// The output consists of a framed protobuf request followed by raw file bytes.
+		out := bytes.NewReader(stream.written.Bytes())
 		received := &models.TransferRequest{}
 
 		require.NoError(t, readMessage(out, received))
@@ -612,19 +684,10 @@ func TestTransferSendRun(t *testing.T) {
 				RejectReason: &reason,
 			},
 		)
+		stream := &transferTestStream{readFrom: responseReader}
+		sender := NewTransferSend(reader, stream, senderAddr)
 
-		var written bytes.Buffer
-		stream := &mockStream{
-			writeFunc: written.Write,
-			readFunc:  responseReader.Read,
-		}
-
-		sender := &transferSend{
-			state:    sendInit,
-			response: &models.TransferResponse{},
-		}
-
-		result := sender.run(reader, stream, senderAddr)
+		result := sender.run()
 
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
@@ -633,8 +696,7 @@ func TestTransferSendRun(t *testing.T) {
 		require.NotNil(t, result.RejectReason)
 		assert.Equal(t, reason, *result.RejectReason)
 
-		// Confirm only the request was sent; no file payload follows it.
-		out := bytes.NewReader(written.Bytes())
+		out := bytes.NewReader(stream.written.Bytes())
 		received := &models.TransferRequest{}
 
 		require.NoError(t, readMessage(out, received))
@@ -649,26 +711,16 @@ func TestTransferSendRun(t *testing.T) {
 		expectedErr := errors.New("stat failed")
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
 		reader.statErr = expectedErr
+		stream := &transferTestStream{}
+		sender := NewTransferSend(reader, stream, senderAddr)
 
-		writeCalls := 0
-		stream := &mockStream{
-			writeFunc: func([]byte) (int, error) {
-				writeCalls++
-				return 0, nil
-			},
-		}
-
-		sender := &transferSend{
-			state: sendInit,
-		}
-
-		result := sender.run(reader, stream, senderAddr)
+		result := sender.run()
 
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
 		assert.Equal(t, sendError, sender.state)
 		assert.Nil(t, sender.request)
-		assert.Zero(t, writeCalls)
+		assert.Zero(t, stream.writeCalls)
 	})
 
 	t.Run("stops when sending request fails", func(t *testing.T) {
@@ -676,18 +728,10 @@ func TestTransferSendRun(t *testing.T) {
 
 		expectedErr := errors.New("stream write failed")
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
+		stream := &transferTestStream{writeErr: expectedErr}
+		sender := NewTransferSend(reader, stream, senderAddr)
 
-		stream := &mockStream{
-			writeFunc: func([]byte) (int, error) {
-				return 0, expectedErr
-			},
-		}
-
-		sender := &transferSend{
-			state: sendInit,
-		}
-
-		result := sender.run(reader, stream, senderAddr)
+		result := sender.run()
 
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
@@ -695,53 +739,127 @@ func TestTransferSendRun(t *testing.T) {
 		assert.NotNil(t, sender.request)
 	})
 
-	t.Run("stops when reading response fails", func(t *testing.T) {
+	t.Run("stops when receiving response fails", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("stream read failed")
-		sender := &transferSend{
-			state:    sendWaitingResponse,
-			response: &models.TransferResponse{},
-		}
+		reader := newMockTransferReader("hello.txt", []byte("hello"))
+		stream := &transferTestStream{readErr: expectedErr}
+		sender := NewTransferSend(reader, stream, senderAddr)
 
-		stream := &mockStream{
-			readFunc: func([]byte) (int, error) {
-				return 0, expectedErr
-			},
-		}
-
-		result := sender.run(
-			newMockTransferReader("hello.txt", []byte("hello")),
-			stream,
-			senderAddr,
-		)
+		result := sender.run()
 
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
 		assert.Equal(t, sendError, sender.state)
 	})
 
-	t.Run("stops when sending file data fails", func(t *testing.T) {
+	t.Run("stops when reading file data fails", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("file read failed")
-		reader := newMockTransferReader("hello.txt", []byte("hello"))
-		reader.readErr = expectedErr
-
-		stream := &mockStream{
-			writeFunc: func(p []byte) (int, error) {
-				return len(p), nil
-			},
+		reader := &failAfterRewindReader{
+			mockTransferReader: newMockTransferReader("hello.txt", []byte("hello")),
+			err:                expectedErr,
 		}
+		responseReader := newTransferResponseReader(
+			t,
+			&models.TransferResponse{Accepted: true},
+		)
+		stream := &transferTestStream{readFrom: responseReader}
+		sender := NewTransferSend(reader, stream, senderAddr)
 
-		sender := &transferSend{
-			state: sendSending,
-		}
-
-		result := sender.run(reader, stream, senderAddr)
+		result := sender.run()
 
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
+		assert.True(t, result.Accepted)
 		assert.Equal(t, sendError, sender.state)
+	})
+
+	t.Run("stops when writing file data fails", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("file write failed")
+		reader := newMockTransferReader("hello.txt", []byte("hello"))
+		responseReader := newTransferResponseReader(
+			t,
+			&models.TransferResponse{Accepted: true},
+		)
+
+		// writeMessage writes the request header and protobuf first.
+		// The third Write call is the first file-data write.
+		stream := &transferTestStream{
+			readFrom:    responseReader,
+			writeErr:    expectedErr,
+			failWriteAt: 3,
+		}
+		sender := NewTransferSend(reader, stream, senderAddr)
+
+		result := sender.run()
+
+		require.NotNil(t, result)
+		require.ErrorIs(t, result.Err, expectedErr)
+		assert.True(t, result.Accepted)
+		assert.Equal(t, sendError, sender.state)
+	})
+
+	t.Run("does not allow second call", func(t *testing.T) {
+		t.Parallel()
+
+		senderAddr := &net.UDPAddr{
+			IP:   net.ParseIP("192.0.2.10"),
+			Port: 12345,
+		}
+
+		reader := newMockTransferReader("hello.txt", []byte("hello"))
+
+		var responseBuffer bytes.Buffer
+		require.NoError(t, writeMessage(
+			&responseBuffer,
+			&models.TransferResponse{Accepted: true},
+		))
+		responseReader := bytes.NewReader(responseBuffer.Bytes())
+
+		var written bytes.Buffer
+		var readCalls, writeCalls int
+
+		stream := &mockStream{
+			readFunc: func(p []byte) (int, error) {
+				readCalls++
+				return responseReader.Read(p)
+			},
+			writeFunc: func(p []byte) (int, error) {
+				writeCalls++
+				return written.Write(p)
+			},
+			closeFunc: func() error {
+				return nil
+			},
+		}
+
+		sender := NewTransferSend(reader, stream, senderAddr)
+
+		// The first invocation should complete successfully.
+		firstResult := sender.run()
+
+		require.NotNil(t, firstResult)
+		require.NoError(t, firstResult.Err)
+		assert.True(t, firstResult.Accepted)
+		assert.Equal(t, sendDone, sender.state)
+
+		readsAfterFirstRun := readCalls
+		writesAfterFirstRun := writeCalls
+
+		// The second invocation should be rejected without performing I/O.
+		secondResult := sender.run()
+
+		require.NotNil(t, secondResult)
+		require.Error(t, secondResult.Err)
+		assert.ErrorContains(t, secondResult.Err, "already called")
+		assert.Equal(t, sendError, sender.state)
+
+		assert.Equal(t, readsAfterFirstRun, readCalls)
+		assert.Equal(t, writesAfterFirstRun, writeCalls)
 	})
 }
