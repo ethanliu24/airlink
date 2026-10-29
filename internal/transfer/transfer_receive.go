@@ -40,7 +40,7 @@ func (r *transferReceive) run() *receiveResult {
 	var receiveErr error
 
 	if r.consumed {
-		receiveErr = fmt.Errorf("<run> already called on a transferSend")
+		receiveErr = fmt.Errorf("<run> already called on a transferReceive")
 		r.state = receiveError
 	}
 

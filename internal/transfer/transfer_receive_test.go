@@ -61,8 +61,7 @@ func newReceiveRequestReader(
 	return bytes.NewReader(buf.Bytes())
 }
 
-func newInvalidProtobufReader() *bytes.Reader {
-	// A length-prefixed message containing invalid protobuf wire data.
+func newInvalidReceiveMessageReader() *bytes.Reader {
 	header := make([]byte, 4)
 	binary.BigEndian.PutUint32(header, 1)
 
@@ -72,7 +71,7 @@ func newInvalidProtobufReader() *bytes.Reader {
 func TestTransferReceiveRun(t *testing.T) {
 	t.Parallel()
 
-	t.Run("ingests request and advances to process request", func(t *testing.T) {
+	t.Run("ingests request and processes it", func(t *testing.T) {
 		t.Parallel()
 
 		expected := &models.TransferRequest{
@@ -97,17 +96,23 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
 
-		assert.Equal(t, receiveProcessRequest, receiver.state)
+		assert.Equal(t, receiveRespond, receiver.state)
 		assert.True(t, receiver.consumed)
 
 		require.NotNil(t, receiver.request)
 		require.NotNil(t, result.Request)
+		require.NotNil(t, result.Response)
 
 		assert.Equal(t, expected.GetFilename(), result.Request.GetFilename())
 		assert.Equal(t, expected.GetExtension(), result.Request.GetExtension())
 		assert.Equal(t, expected.GetFileSize(), result.Request.GetFileSize())
 		assert.Equal(t, expected.GetMime(), result.Request.GetMime())
 		assert.Equal(t, expected.GetSenderIp(), result.Request.GetSenderIp())
+
+		// processResponse currently accepts every request.
+		assert.True(t, result.Response.GetAccepted())
+		assert.Empty(t, result.Response.GetRejectReason())
+		assert.Zero(t, stream.writeCalls)
 	})
 
 	t.Run("transitions to error when stream read fails", func(t *testing.T) {
@@ -131,15 +136,15 @@ func TestTransferReceiveRun(t *testing.T) {
 
 		assert.Equal(t, receiveError, receiver.state)
 		assert.True(t, receiver.consumed)
-		assert.Nil(t, receiver.request)
 		assert.Nil(t, result.Request)
+		assert.Nil(t, result.Response)
 	})
 
 	t.Run("transitions to error when protobuf is invalid", func(t *testing.T) {
 		t.Parallel()
 
 		stream := &receiveTestStream{
-			reader: newInvalidProtobufReader(),
+			reader: newInvalidReceiveMessageReader(),
 		}
 
 		receiver := &transferReceive{
@@ -153,20 +158,18 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.Error(t, result.Err)
 
 		assert.Equal(t, receiveError, receiver.state)
-		assert.Nil(t, receiver.request)
 		assert.Nil(t, result.Request)
+		assert.Nil(t, result.Response)
 	})
 
 	t.Run("rejects a second invocation", func(t *testing.T) {
 		t.Parallel()
 
-		expected := &models.TransferRequest{
-			Filename: "hello.txt",
-			FileSize: 5,
-		}
-
 		stream := &receiveTestStream{
-			reader: newReceiveRequestReader(t, expected),
+			reader: newReceiveRequestReader(t, &models.TransferRequest{
+				Filename: "hello.txt",
+				FileSize: 5,
+			}),
 		}
 
 		receiver := &transferReceive{
@@ -177,7 +180,7 @@ func TestTransferReceiveRun(t *testing.T) {
 		firstResult := receiver.run()
 
 		require.NoError(t, firstResult.Err)
-		assert.Equal(t, receiveProcessRequest, receiver.state)
+		assert.Equal(t, receiveRespond, receiver.state)
 
 		readCallsAfterFirstRun := stream.readCalls
 
@@ -193,7 +196,7 @@ func TestTransferReceiveRun(t *testing.T) {
 		t.Parallel()
 
 		receiver := &transferReceive{
-			state: receiveDone,
+			state:  receiveDone,
 			stream: &receiveTestStream{},
 		}
 
@@ -203,6 +206,21 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.NoError(t, result.Err)
 		assert.Equal(t, receiveDone, receiver.state)
 		assert.True(t, receiver.consumed)
+	})
+
+	t.Run("handles invalid state", func(t *testing.T) {
+		t.Parallel()
+
+		receiver := &transferReceive{
+			state:  receiveState("invalid"),
+			stream: &receiveTestStream{},
+		}
+
+		result := receiver.run()
+
+		require.NotNil(t, result)
+		require.ErrorContains(t, result.Err, "invalid transfer receive state")
+		assert.Equal(t, receiveError, receiver.state)
 	})
 }
 
@@ -243,6 +261,7 @@ func TestIngestRequest(t *testing.T) {
 		t.Parallel()
 
 		stream := &receiveTestStream{}
+
 		receiver := &transferReceive{
 			state:  receiveInit,
 			stream: stream,
@@ -279,7 +298,7 @@ func TestIngestRequest(t *testing.T) {
 		receiver := &transferReceive{
 			state: receiveIngestingRequest,
 			stream: &receiveTestStream{
-				reader: newInvalidProtobufReader(),
+				reader: newInvalidReceiveMessageReader(),
 			},
 		}
 
@@ -287,5 +306,28 @@ func TestIngestRequest(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Nil(t, request)
+	})
+}
+
+func TestProcessResponse(t *testing.T) {
+	t.Parallel()
+
+	t.Run("accepts request by default", func(t *testing.T) {
+		t.Parallel()
+
+		receiver := &transferReceive{
+			request: &models.TransferRequest{
+				Filename: "hello.txt",
+				FileSize: 5,
+			},
+		}
+
+		response, err := receiver.processResponse()
+
+		require.NoError(t, err)
+		require.NotNil(t, response)
+
+		assert.True(t, response.GetAccepted())
+		assert.Empty(t, response.GetRejectReason())
 	})
 }
