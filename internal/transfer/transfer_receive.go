@@ -9,8 +9,8 @@ type receiveState string
 
 const (
 	receiveInit             receiveState = "init"
-	receiveInvestingRequest receiveState = "ingestingRequest"
-	receiveProcess          receiveState = "process"
+	receiveIngestingRequest receiveState = "ingestingRequest"
+	receiveProcessRequest   receiveState = "processRequest"
 	receiveRespond          receiveState = "respond"
 	receiveReceiving        receiveState = "receiving"
 	receiveDone             receiveState = "done"
@@ -19,20 +19,23 @@ const (
 
 type transferReceive struct {
 	state    receiveState
+	request  *models.TransferRequest
 	stream   Stream
 	consumed bool
 }
 
 type receiveResult struct {
-    Request         *models.TransferRequest
-    Accepted        bool
-    RejectReason    *string
-    DestinationPath *string  // abs path
-    Err             error
+	Request         *models.TransferRequest
+	Accepted        bool
+	RejectReason    *string
+	DestinationPath *string // abs path
+	Err             error
 }
 
+// This should run synchronously
+// This function should only be called once per TransferSend
+// Assumes transferSend is properly initialized
 func (r *transferReceive) run() *receiveResult {
-	var request *models.TransferRequest
 	var accepted bool
 	var rejectReason *string
 	var destinationPath *string
@@ -49,19 +52,52 @@ outer:
 	for {
 		switch r.state {
 		case receiveInit:
-			r.state = receiveInvestingRequest
-		case receiveInvestingRequest:
+			r.state = receiveIngestingRequest
+		case receiveIngestingRequest:
+			request, err := r.ingestRequst()
+			if err != nil {
+				receiveErr = err
+				r.state = receiveError
+				continue outer
+			}
+
+			r.request = request
+			r.state = receiveProcessRequest
+		case receiveProcessRequest:
 			break outer
 		case receiveDone, receiveError:
 			break outer
+		default:
+			receiveErr = fmt.Errorf("invalid transfer receive state: %q", r.state)
+			r.state = receiveError
+			continue outer
 		}
 	}
 
 	return &receiveResult{
-		Request: request,
-		Accepted: accepted,
-		RejectReason: rejectReason,
+		Request:         r.request,
+		Accepted:        accepted,
+		RejectReason:    rejectReason,
 		DestinationPath: destinationPath,
-		Err: receiveErr,
+		Err:             receiveErr,
 	}
+}
+
+func (r *transferReceive) ingestRequst() (*models.TransferRequest, error) {
+	if r.state != receiveIngestingRequest {
+		return nil, fmt.Errorf(
+			"transferReceive state is not %s in ingestRequst, got: %s",
+			receiveIngestingRequest,
+			r.state,
+		)
+	}
+
+	var request *models.TransferRequest = &models.TransferRequest{}
+
+	err := readMessage(r.stream, request)
+	if err != nil {
+		return nil, err
+	}
+
+	return request, nil
 }
