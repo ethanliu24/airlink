@@ -8,26 +8,26 @@ import (
 type receiveState string
 
 const (
-	receiveInit             receiveState = "init"
-	receiveIngestingRequest receiveState = "ingestingRequest"
-	receiveProcessRequest   receiveState = "processRequest"
-	receiveRespond          receiveState = "respond"
-	receiveReceiving        receiveState = "receiving"
-	receiveDone             receiveState = "done"
-	receiveError            receiveState = "error"
+	receiveInit              receiveState = "init"
+	receiveIngestingRequest  receiveState = "ingestingRequest"
+	receiveProcessingRequest receiveState = "processingRequest"
+	receiveRespond           receiveState = "respond"
+	receiveReceiving         receiveState = "receiving"
+	receiveDone              receiveState = "done"
+	receiveError             receiveState = "error"
 )
 
 type transferReceive struct {
 	state    receiveState
 	request  *models.TransferRequest
+	response *models.TransferResponse
 	stream   Stream
 	consumed bool
 }
 
 type receiveResult struct {
 	Request         *models.TransferRequest
-	Accepted        bool
-	RejectReason    *string
+	Response        *models.TransferResponse
 	DestinationPath *string // abs path
 	Err             error
 }
@@ -35,14 +35,15 @@ type receiveResult struct {
 // This should run synchronously
 // This function should only be called once per TransferSend
 // Assumes transferSend is properly initialized
+// This should run synchronously
+// This function should only be called once per TransferSend
+// Assumes transferSend is properly initialized
 func (r *transferReceive) run() *receiveResult {
-	var accepted bool
-	var rejectReason *string
 	var destinationPath *string
 	var receiveErr error
 
 	if r.consumed {
-		receiveErr = fmt.Errorf("<run> already called on a transferSend")
+		receiveErr = fmt.Errorf("<run> already called on a transferReceive")
 		r.state = receiveError
 	}
 
@@ -62,8 +63,18 @@ outer:
 			}
 
 			r.request = request
-			r.state = receiveProcessRequest
-		case receiveProcessRequest:
+			r.state = receiveProcessingRequest
+		case receiveProcessingRequest:
+			response, err := r.processResponse()
+			if err != nil {
+				receiveErr = err
+				r.state = receiveError
+				continue outer
+			}
+
+			r.response = response
+			r.state = receiveRespond
+		case receiveRespond:
 			break outer
 		case receiveDone, receiveError:
 			break outer
@@ -76,8 +87,7 @@ outer:
 
 	return &receiveResult{
 		Request:         r.request,
-		Accepted:        accepted,
-		RejectReason:    rejectReason,
+		Response:        r.response,
 		DestinationPath: destinationPath,
 		Err:             receiveErr,
 	}
@@ -100,4 +110,12 @@ func (r *transferReceive) ingestRequst() (*models.TransferRequest, error) {
 	}
 
 	return request, nil
+}
+
+// TODO always accept for now, figure out how to get data from user
+func (r *transferReceive) processResponse() (*models.TransferResponse, error) {
+	return &models.TransferResponse{
+		Accepted: true,
+		RejectReason: nil,
+	}, nil
 }
