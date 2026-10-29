@@ -35,6 +35,9 @@ type receiveResult struct {
 // This should run synchronously
 // This function should only be called once per TransferSend
 // Assumes transferSend is properly initialized
+// This should run synchronously
+// This function should only be called once per TransferSend
+// Assumes transferSend is properly initialized
 func (r *transferReceive) run() *receiveResult {
 	var destinationPath *string
 	var receiveErr error
@@ -79,6 +82,10 @@ outer:
 			receiveErr = fmt.Errorf("invalid transfer receive state: %q", r.state)
 			r.state = receiveError
 			continue outer
+		default:
+			receiveErr = fmt.Errorf("invalid transfer receive state: %q", r.state)
+			r.state = receiveError
+			continue outer
 		}
 	}
 
@@ -86,6 +93,7 @@ outer:
 		Request:         r.request,
 		Response:        r.response,
 		DestinationPath: destinationPath,
+		Err:             receiveErr,
 		Err:             receiveErr,
 	}
 }
