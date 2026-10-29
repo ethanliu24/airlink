@@ -125,7 +125,7 @@ func TestNewTransferReceive(t *testing.T) {
 
 		stream := &receiveTestStream{}
 
-		receiver := NewTransferReceive(stream)
+		receiver := newTransferReceive(stream)
 
 		require.NotNil(t, receiver)
 		assert.Equal(t, receiveInit, receiver.state)
@@ -137,7 +137,7 @@ func TestNewTransferReceive(t *testing.T) {
 	t.Run("accepts nil stream", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := NewTransferReceive(nil)
+		receiver := newTransferReceive(nil)
 
 		require.NotNil(t, receiver)
 		assert.Equal(t, receiveInit, receiver.state)
@@ -165,7 +165,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			reader: newReceiveInput(t, expected, fileData),
 		}
 
-		receiver := NewTransferReceive(stream)
+		receiver := newTransferReceive(stream)
 
 		result := receiver.run()
 
@@ -204,7 +204,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			readErr: expectedErr,
 		}
 
-		receiver := NewTransferReceive(stream)
+		receiver := newTransferReceive(stream)
 
 		result := receiver.run()
 
@@ -222,7 +222,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			reader: newInvalidReceiveMessageReader(),
 		}
 
-		receiver := NewTransferReceive(stream)
+		receiver := newTransferReceive(stream)
 
 		result := receiver.run()
 
@@ -247,7 +247,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			writeErr: expectedErr,
 		}
 
-		receiver := NewTransferReceive(stream)
+		receiver := newTransferReceive(stream)
 
 		result := receiver.run()
 
@@ -277,7 +277,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			},
 		}
 
-		receiver := NewTransferReceive(stream)
+		receiver := newTransferReceive(stream)
 
 		result := receiver.run()
 
@@ -459,7 +459,7 @@ func TestResolveDestination(t *testing.T) {
 	t.Run("returns absolute path", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := NewTransferReceive(&receiveTestStream{})
+		receiver := newTransferReceive(&receiveTestStream{})
 
 		destination, err := receiver.resolveDestination("report.txt")
 
@@ -475,7 +475,7 @@ func TestResolveDestination(t *testing.T) {
 	t.Run("strips directory components from filename", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := NewTransferReceive(&receiveTestStream{})
+		receiver := newTransferReceive(&receiveTestStream{})
 
 		destination, err := receiver.resolveDestination("../outside.txt")
 		expectedDir, err := filepath.Abs(defaultDestinationDir)

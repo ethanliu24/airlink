@@ -200,7 +200,7 @@ func newTransferResponseReader(
 }
 
 func newTestSender(reader *mockTransferReader) *transferSend {
-	return NewTransferSend(
+	return newTransferSend(
 		reader,
 		&transferTestStream{},
 		&net.UDPAddr{
@@ -297,7 +297,7 @@ func TestInitRequest(t *testing.T) {
 			0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A,
 		}
 		reader := newMockTransferReader("picture.png", data)
-		sender := NewTransferSend(reader, &transferTestStream{}, senderAddr)
+		sender := newTransferSend(reader, &transferTestStream{}, senderAddr)
 
 		request, err := sender.initRequest()
 
@@ -341,7 +341,7 @@ func TestInitRequest(t *testing.T) {
 		expectedErr := errors.New("stat failed")
 		reader := newMockTransferReader("picture.png", []byte("data"))
 		reader.statErr = expectedErr
-		sender := NewTransferSend(reader, &transferTestStream{}, senderAddr)
+		sender := newTransferSend(reader, &transferTestStream{}, senderAddr)
 
 		request, err := sender.initRequest()
 
@@ -355,7 +355,7 @@ func TestInitRequest(t *testing.T) {
 		expectedErr := errors.New("read failed")
 		reader := newMockTransferReader("picture.png", []byte("data"))
 		reader.readErr = expectedErr
-		sender := NewTransferSend(reader, &transferTestStream{}, senderAddr)
+		sender := newTransferSend(reader, &transferTestStream{}, senderAddr)
 
 		request, err := sender.initRequest()
 
@@ -370,7 +370,7 @@ func TestInitRequest(t *testing.T) {
 		invalidAddr := &net.IPAddr{
 			IP: net.ParseIP("192.0.2.10"),
 		}
-		sender := NewTransferSend(reader, &transferTestStream{}, invalidAddr)
+		sender := newTransferSend(reader, &transferTestStream{}, invalidAddr)
 
 		request, err := sender.initRequest()
 
@@ -400,7 +400,7 @@ func TestSendTransferRequest(t *testing.T) {
 		stream := &transferTestStream{
 			writeErr: expectedErr,
 		}
-		sender := NewTransferSend(
+		sender := newTransferSend(
 			newMockTransferReader("hello.txt", []byte("hello")),
 			stream,
 			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
@@ -420,7 +420,7 @@ func TestSendTransferRequest(t *testing.T) {
 		t.Parallel()
 
 		stream := &transferTestStream{}
-		sender := NewTransferSend(
+		sender := newTransferSend(
 			newMockTransferReader("hello.txt", []byte("hello")),
 			stream,
 			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
@@ -478,7 +478,7 @@ func TestRecieveTransferResponse(t *testing.T) {
 			&models.TransferResponse{Accepted: true},
 		)
 		stream := &transferTestStream{readFrom: responseReader}
-		sender := NewTransferSend(
+		sender := newTransferSend(
 			newMockTransferReader("hello.txt", []byte("hello")),
 			stream,
 			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
@@ -503,7 +503,7 @@ func TestRecieveTransferResponse(t *testing.T) {
 			},
 		)
 		stream := &transferTestStream{readFrom: responseReader}
-		sender := NewTransferSend(
+		sender := newTransferSend(
 			newMockTransferReader("hello.txt", []byte("hello")),
 			stream,
 			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
@@ -523,7 +523,7 @@ func TestRecieveTransferResponse(t *testing.T) {
 
 		expectedErr := errors.New("stream read failed")
 		stream := &transferTestStream{readErr: expectedErr}
-		sender := NewTransferSend(
+		sender := newTransferSend(
 			newMockTransferReader("hello.txt", []byte("hello")),
 			stream,
 			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
@@ -548,7 +548,7 @@ func TestSendData(t *testing.T) {
 		)
 		reader := newMockTransferReader("binary.dat", data)
 		stream := &transferTestStream{}
-		sender := NewTransferSend(
+		sender := newTransferSend(
 			reader,
 			stream,
 			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
@@ -568,7 +568,7 @@ func TestSendData(t *testing.T) {
 
 		reader := newMockTransferReader("empty", nil)
 		stream := &transferTestStream{}
-		sender := NewTransferSend(
+		sender := newTransferSend(
 			reader,
 			stream,
 			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
@@ -598,7 +598,7 @@ func TestSendData(t *testing.T) {
 		expectedErr := errors.New("file read failed")
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
 		reader.readErr = expectedErr
-		sender := NewTransferSend(
+		sender := newTransferSend(
 			reader,
 			&transferTestStream{},
 			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
@@ -616,7 +616,7 @@ func TestSendData(t *testing.T) {
 		expectedErr := errors.New("stream write failed")
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
 		stream := &transferTestStream{writeErr: expectedErr}
-		sender := NewTransferSend(
+		sender := newTransferSend(
 			reader,
 			stream,
 			&net.UDPAddr{IP: net.ParseIP("192.0.2.10"), Port: 12345},
@@ -647,7 +647,7 @@ func TestTransferSendRun(t *testing.T) {
 			&models.TransferResponse{Accepted: true},
 		)
 		stream := &transferTestStream{readFrom: responseReader}
-		sender := NewTransferSend(reader, stream, senderAddr)
+		sender := newTransferSend(reader, stream, senderAddr)
 
 		result := sender.run()
 
@@ -685,7 +685,7 @@ func TestTransferSendRun(t *testing.T) {
 			},
 		)
 		stream := &transferTestStream{readFrom: responseReader}
-		sender := NewTransferSend(reader, stream, senderAddr)
+		sender := newTransferSend(reader, stream, senderAddr)
 
 		result := sender.run()
 
@@ -712,7 +712,7 @@ func TestTransferSendRun(t *testing.T) {
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
 		reader.statErr = expectedErr
 		stream := &transferTestStream{}
-		sender := NewTransferSend(reader, stream, senderAddr)
+		sender := newTransferSend(reader, stream, senderAddr)
 
 		result := sender.run()
 
@@ -729,7 +729,7 @@ func TestTransferSendRun(t *testing.T) {
 		expectedErr := errors.New("stream write failed")
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
 		stream := &transferTestStream{writeErr: expectedErr}
-		sender := NewTransferSend(reader, stream, senderAddr)
+		sender := newTransferSend(reader, stream, senderAddr)
 
 		result := sender.run()
 
@@ -745,7 +745,7 @@ func TestTransferSendRun(t *testing.T) {
 		expectedErr := errors.New("stream read failed")
 		reader := newMockTransferReader("hello.txt", []byte("hello"))
 		stream := &transferTestStream{readErr: expectedErr}
-		sender := NewTransferSend(reader, stream, senderAddr)
+		sender := newTransferSend(reader, stream, senderAddr)
 
 		result := sender.run()
 
@@ -767,7 +767,7 @@ func TestTransferSendRun(t *testing.T) {
 			&models.TransferResponse{Accepted: true},
 		)
 		stream := &transferTestStream{readFrom: responseReader}
-		sender := NewTransferSend(reader, stream, senderAddr)
+		sender := newTransferSend(reader, stream, senderAddr)
 
 		result := sender.run()
 
@@ -794,7 +794,7 @@ func TestTransferSendRun(t *testing.T) {
 			writeErr:    expectedErr,
 			failWriteAt: 3,
 		}
-		sender := NewTransferSend(reader, stream, senderAddr)
+		sender := newTransferSend(reader, stream, senderAddr)
 
 		result := sender.run()
 

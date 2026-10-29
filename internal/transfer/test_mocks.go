@@ -129,12 +129,12 @@ func (r *mockReader) Read(p []byte) (int, error) {
 	}
 
 	remaining := len(r.data) - r.pointer
-	bytesToRead := min(cap(p), remaining)
-	dataRead := r.data[r.pointer:r.pointer + bytesToRead]
-	r.pointer += bytesToRead
-	copy(p, []byte(dataRead))
+	bytesToRead := min(len(p), remaining)
 
-	return bytesToRead, nil
+	n := copy(p, r.data[r.pointer:r.pointer+bytesToRead])
+	r.pointer += n
+
+	return n, nil
 }
 
 func (r *mockReader) Close() error {
@@ -158,7 +158,25 @@ func (r *mockReader) Stat() (os.FileInfo, error) {
 }
 
 func (r *mockReader) Seek(offset int64, whence int) (int64, error) {
-	return 0, nil
+	var target int64
+
+	switch whence {
+	case io.SeekStart:
+		target = offset
+	case io.SeekCurrent:
+		target = int64(r.pointer) + offset
+	case io.SeekEnd:
+		target = int64(len(r.data)) + offset
+	default:
+		return 0, errors.New("invalid seek mode")
+	}
+
+	if target < 0 {
+		return 0, errors.New("negative seek position")
+	}
+
+	r.pointer = int(target)
+	return target, nil
 }
 
 func newMockReader(data string) (file.Reader, error) {

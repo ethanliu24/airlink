@@ -47,6 +47,10 @@ func main() {
 		senderPort, receiverPort = PORT_2, PORT_1
 	}
 
+	if !*isSender {
+		senderPort, receiverPort = PORT_2, PORT_1
+	}
+
 	senderAddr, err := node.CreateUDPAddress(LOCAL_IP, senderPort)
 	if err != nil {
 		log.Fatalf("sender udp addr creation failed: %v\n", err)

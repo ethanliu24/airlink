@@ -231,7 +231,7 @@ func (s *transferSend) sendData() error {
 }
 
 // Assume caller will handle opening and closing the file and stream
-func NewTransferSend(reader file.Reader, stream Stream, senderAddr net.Addr) *transferSend {
+func newTransferSend(reader file.Reader, stream Stream, senderAddr net.Addr) *transferSend {
 	return &transferSend{
 		state:      sendInit,
 		response:   &models.TransferResponse{},

@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"sync"
 
@@ -27,17 +26,11 @@ type Receiver struct {
 func handleStream(stream Stream) {
 	defer stream.Close()
 
-	buf := make([]byte, RECEIVER_BUFFER_SIZE_BYTES)
-	for {
-		n, err := stream.Read(buf)
-		fmt.Printf("%s", string(buf[:n]))
+	receive := newTransferReceive(stream)
+	result := receive.run()
 
-		if errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			slog.Error("receiver stream closed", "err", err, "errType", fmt.Sprintf("%T", err))
-			break
-		}
+	if result.Err != nil {
+		slog.Error("transfer failed", "err", result.Err)
 	}
 }
 
