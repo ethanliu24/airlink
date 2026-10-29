@@ -22,7 +22,7 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
 
-		assert.Equal(t, receiveInvestingRequest, receiver.state)
+		assert.Equal(t, receiveIngestingRequest, receiver.state)
 		assert.True(t, receiver.consumed)
 	})
 
