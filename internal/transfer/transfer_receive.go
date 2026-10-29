@@ -33,11 +33,8 @@ type receiveResult struct {
 }
 
 // This should run synchronously
-// This function should only be called once per TransferSend
-// Assumes transferSend is properly initialized
-// This should run synchronously
-// This function should only be called once per TransferSend
-// Assumes transferSend is properly initialized
+// This function should only be called once per transferReceive
+// Assumes transferReceive is properly initialized
 func (r *transferReceive) run() *receiveResult {
 	var destinationPath *string
 	var receiveErr error
@@ -55,14 +52,13 @@ outer:
 		case receiveInit:
 			r.state = receiveIngestingRequest
 		case receiveIngestingRequest:
-			request, err := r.ingestRequst()
+			err := r.ingestRequst()
 			if err != nil {
 				receiveErr = err
 				r.state = receiveError
 				continue outer
 			}
 
-			r.request = request
 			r.state = receiveProcessingRequest
 		case receiveProcessingRequest:
 			response, err := r.processResponse()
@@ -75,6 +71,15 @@ outer:
 			r.response = response
 			r.state = receiveRespond
 		case receiveRespond:
+			err := r.sendResponse()
+			if err != nil {
+				receiveErr = err
+				r.state = receiveError
+				continue outer
+			}
+
+			r.state = receiveReceiving
+		case receiveReceiving:
 			break outer
 		case receiveDone, receiveError:
 			break outer
@@ -93,29 +98,56 @@ outer:
 	}
 }
 
-func (r *transferReceive) ingestRequst() (*models.TransferRequest, error) {
+func (r *transferReceive) ingestRequst() error {
 	if r.state != receiveIngestingRequest {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"transferReceive state is not %s in ingestRequst, got: %s",
 			receiveIngestingRequest,
 			r.state,
 		)
 	}
 
-	var request *models.TransferRequest = &models.TransferRequest{}
-
-	err := readMessage(r.stream, request)
-	if err != nil {
-		return nil, err
+	if r.request == nil {
+		return fmt.Errorf("transferReceive request nil - not initialized properly")
 	}
 
-	return request, nil
+	err := readMessage(r.stream, r.request)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // TODO always accept for now, figure out how to get data from user
 func (r *transferReceive) processResponse() (*models.TransferResponse, error) {
+	if r.state != receiveProcessingRequest {
+		return nil, fmt.Errorf(
+			"transferReceive state is not %s in processResponse, got: %s",
+			receiveProcessingRequest,
+			r.state,
+		)
+	}
+
 	return &models.TransferResponse{
 		Accepted: true,
 		RejectReason: nil,
 	}, nil
+}
+
+func (r *transferReceive) sendResponse() error {
+	if r.state != receiveRespond {
+		return fmt.Errorf(
+			"transferReceive state is not %s in sendResponse, got: %s",
+			receiveRespond,
+			r.state,
+		)
+	}
+
+	err := writeMessage(r.stream, r.response)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
