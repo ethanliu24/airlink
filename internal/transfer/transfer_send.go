@@ -247,3 +247,12 @@ func (s *transferSend) sendData() error {
 	return nil
 }
 
+func NewTransferSend(reader file.Reader, stream Stream, senderAddr net.Addr) *transferSend {
+	return &transferSend{
+		state: sendInit,
+		response: &models.TransferResponse{},
+		reader: reader,
+		stream: stream,
+		senderAddr: senderAddr,
+	}
+}
