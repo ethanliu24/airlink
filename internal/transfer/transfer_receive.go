@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 )
 
 type receiveState string
@@ -19,18 +21,23 @@ const (
 	receiveError             receiveState = "error"
 )
 
+const (
+	defaultDestinationDir = "tmp"
+)
+
 type transferReceive struct {
-	state    receiveState
-	request  *models.TransferRequest
-	response *models.TransferResponse
-	stream   Stream
-	consumed bool
+	state           receiveState
+	request         *models.TransferRequest
+	response        *models.TransferResponse
+	stream          Stream
+	destinationPath string
+	consumed        bool
 }
 
 type receiveResult struct {
 	Request         *models.TransferRequest
 	Response        *models.TransferResponse
-	DestinationPath *string // abs path
+	DestinationPath string // abs path
 	Err             error
 }
 
@@ -38,7 +45,6 @@ type receiveResult struct {
 // This function should only be called once per transferReceive
 // Assumes transferReceive is properly initialized
 func (r *transferReceive) run() *receiveResult {
-	var destinationPath *string
 	var receiveErr error
 
 	if r.consumed {
@@ -63,7 +69,7 @@ outer:
 
 			r.state = receiveProcessingRequest
 		case receiveProcessingRequest:
-			response, err := r.processResponse()
+			response, destinationPath, err := r.processResponse()
 			if err != nil {
 				receiveErr = err
 				r.state = receiveError
@@ -71,6 +77,7 @@ outer:
 			}
 
 			r.response = response
+			r.destinationPath = destinationPath
 			r.state = receiveRespond
 		case receiveRespond:
 			err := r.sendResponse()
@@ -102,7 +109,7 @@ outer:
 	return &receiveResult{
 		Request:         r.request,
 		Response:        r.response,
-		DestinationPath: destinationPath,
+		DestinationPath: r.destinationPath,
 		Err:             receiveErr,
 	}
 }
@@ -130,19 +137,38 @@ func (r *transferReceive) ingestRequst() error {
 
 // TODO always accept for now, figure out how to get data from user
 // TODO return detination too
-func (r *transferReceive) processResponse() (*models.TransferResponse, error) {
+func (r *transferReceive) processResponse() (*models.TransferResponse, string, error) {
 	if r.state != receiveProcessingRequest {
-		return nil, fmt.Errorf(
+		return nil, "", fmt.Errorf(
 			"transferReceive state is not %s in processResponse, got: %s",
 			receiveProcessingRequest,
 			r.state,
 		)
 	}
 
+	destinationPath, err := r.resolveDestination(r.request.GetFilename())
+	if err != nil {
+		return nil, "", err
+	}
+
 	return &models.TransferResponse{
 		Accepted:     true,
 		RejectReason: nil,
-	}, nil
+	}, destinationPath, nil
+}
+
+func (r *transferReceive) resolveDestination(filename string) (string, error) {
+	destinationDir, err := filepath.Abs(defaultDestinationDir)
+	if err != nil {
+		return "", err
+	}
+
+	if err := os.MkdirAll(destinationDir, 0o755); err != nil {
+		return "", err
+	}
+
+	filename = filepath.Base(filename)
+	return filepath.Join(destinationDir, filename), nil
 }
 
 func (r *transferReceive) sendResponse() error {
@@ -179,7 +205,7 @@ func (r *transferReceive) receiveData() (int, error) {
 		totalBytesRead += n
 
 		// TODO stream the file in destination
-		fmt.Printf("%s", string(buf[:n]))
+		fmt.Printf("received in %s: %s", r.destinationPath, string(buf[:n]))
 
 		if errors.Is(err, io.EOF) {
 			break
