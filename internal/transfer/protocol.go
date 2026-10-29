@@ -12,6 +12,8 @@ import (
 const (
 	msgHeaderLengthBytes = 4
 	maxMessageLengthBytes = 8 * 1024
+	writeOperation = "transfer protocol write"
+	readOperation = "transfer protocol read"
 	senderName = "Bob" // TODO handle this more properly
 	clientName = "airlink" // TODO handle this more properly
 	clientVersion = "0.0.1" // TODO handle this more properly
@@ -21,13 +23,13 @@ func messageIsNilError(operation string) error {
 	return fmt.Errorf("%s: message is nil", operation)
 }
 
-func messageTooLargeError(length int) error {
-	return fmt.Errorf("message too large: %d bytes", length)
+func messageTooLargeError(operation string, length int) error {
+	return fmt.Errorf("message too large in %s: %d bytes", operation, length)
 }
 
 func writeMessage(w io.Writer, msg proto.Message) error {
 	if msg == nil {
-		return messageIsNilError("write protocol")
+		return messageIsNilError(writeOperation)
 	}
 
 	// serialize
@@ -37,7 +39,7 @@ func writeMessage(w io.Writer, msg proto.Message) error {
 	}
 
 	if len(data) > maxMessageLengthBytes {
-		return messageTooLargeError(len(data))
+		return messageTooLargeError(writeOperation, len(data))
 	}
 
 	// header
@@ -56,7 +58,7 @@ func writeMessage(w io.Writer, msg proto.Message) error {
 
 func readMessage(r io.Reader, msg proto.Message) error {
 	if msg == nil {
-		return messageIsNilError("read protocol")
+		return messageIsNilError(readOperation)
 	}
 
 	// header
@@ -70,7 +72,7 @@ func readMessage(r io.Reader, msg proto.Message) error {
 	// parse header
 	length := binary.BigEndian.Uint32(header)
 	if length > maxMessageLengthBytes {
-		return messageTooLargeError(int(length))
+		return messageTooLargeError(readOperation, int(length))
 	}
 
 	// read message

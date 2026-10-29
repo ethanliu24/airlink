@@ -38,7 +38,13 @@ func (s *Sender) sendOverStream(stream Stream, filename string) error {
 	result := send.run()
 
 	if result.Err != nil {
-		return err
+		return result.Err
+	}
+
+	// TODO handle this
+	if !result.Accepted {
+		if result.RejectReason != nil {
+		}
 	}
 
 	return nil

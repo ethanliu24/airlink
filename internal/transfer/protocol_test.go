@@ -99,7 +99,7 @@ func TestWriteMessage(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(
 			t,
-			messageTooLargeError(maxMessageLengthBytes+3),
+			messageTooLargeError(writeOperation, maxMessageLengthBytes+3),
 			err,
 		)
 	})
@@ -228,7 +228,7 @@ func TestReadMessage(t *testing.T) {
 		)
 
 		require.Error(t, err)
-		assert.Equal(t, messageTooLargeError(int(length)), err)
+		assert.Equal(t, messageTooLargeError(readOperation, int(length)), err)
 	})
 
 	t.Run("invalid protobuf data", func(t *testing.T) {
