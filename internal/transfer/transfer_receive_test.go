@@ -3,6 +3,7 @@ package transfer
 import (
 	"airlink/internal/transfer/models"
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"testing"
@@ -48,6 +49,38 @@ func (s *receiveTestStream) Close() error {
 	return nil
 }
 
+type limitedReadReader struct {
+	reader   io.Reader
+	chunkSize int
+}
+
+func (r *limitedReadReader) Read(p []byte) (int, error) {
+	if len(p) > r.chunkSize {
+		p = p[:r.chunkSize]
+	}
+
+	return r.reader.Read(p)
+}
+
+// Allows tests to simulate a Reader returning bytes and an error
+// in the same call, as permitted by io.Reader.
+type singleReadResultReader struct {
+	data []byte
+	err  error
+	done bool
+}
+
+func (r *singleReadResultReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, io.EOF
+	}
+
+	r.done = true
+	n := copy(p, r.data)
+
+	return n, r.err
+}
+
 func newReceiveRequestReader(
 	t *testing.T,
 	request *models.TransferRequest,
@@ -61,8 +94,10 @@ func newReceiveRequestReader(
 }
 
 func newInvalidReceiveMessageReader() *bytes.Reader {
-	// Four-byte length header followed by invalid protobuf data.
-	return bytes.NewReader([]byte{0, 0, 0, 1, 0xff})
+	header := make([]byte, 4)
+	binary.BigEndian.PutUint32(header, 1)
+
+	return bytes.NewReader(append(header, 0xff))
 }
 
 func TestTransferReceiveRun(t *testing.T) {
@@ -94,7 +129,7 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
 
-		assert.Equal(t, receiveReceiving, receiver.state)
+		assert.Equal(t, receiveDone, receiver.state)
 		assert.True(t, receiver.consumed)
 
 		require.NotNil(t, result.Request)
@@ -110,7 +145,6 @@ func TestTransferReceiveRun(t *testing.T) {
 		assert.Empty(t, result.Response.GetRejectReason())
 		assert.Nil(t, result.DestinationPath)
 
-		// The response should have been serialized to the stream.
 		assert.NotZero(t, stream.written.Len())
 
 		receivedResponse := &models.TransferResponse{}
@@ -166,6 +200,7 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.Error(t, result.Err)
 
 		assert.Equal(t, receiveError, receiver.state)
+		assert.NotNil(t, result.Request)
 		assert.Nil(t, result.Response)
 		assert.Zero(t, stream.writeCalls)
 	})
@@ -216,7 +251,7 @@ func TestTransferReceiveRun(t *testing.T) {
 		firstResult := receiver.run()
 
 		require.NoError(t, firstResult.Err)
-		assert.Equal(t, receiveReceiving, receiver.state)
+		assert.Equal(t, receiveDone, receiver.state)
 
 		readCallsAfterFirstRun := stream.readCalls
 		writeCallsAfterFirstRun := stream.writeCalls
@@ -333,7 +368,7 @@ func TestIngestRequest(t *testing.T) {
 		expectedErr := errors.New("stream read failed")
 
 		receiver := &transferReceive{
-			state: receiveIngestingRequest,
+			state:   receiveIngestingRequest,
 			request: &models.TransferRequest{},
 			stream: &receiveTestStream{
 				readErr: expectedErr,
@@ -349,7 +384,7 @@ func TestIngestRequest(t *testing.T) {
 		t.Parallel()
 
 		receiver := &transferReceive{
-			state: receiveIngestingRequest,
+			state:   receiveIngestingRequest,
 			request: &models.TransferRequest{},
 			stream: &receiveTestStream{
 				reader: newInvalidReceiveMessageReader(),
@@ -461,5 +496,136 @@ func TestSendResponse(t *testing.T) {
 		err := receiver.sendResponse()
 
 		require.ErrorIs(t, err, expectedErr)
+	})
+}
+
+func TestReceiveData(t *testing.T) {
+	t.Parallel()
+
+	t.Run("receives data across multiple reads", func(t *testing.T) {
+		t.Parallel()
+
+		data := []byte("some binary file contents")
+		stream := &receiveTestStream{
+			reader: &limitedReadReader{
+				reader:    bytes.NewReader(data),
+				chunkSize: 3,
+			},
+		}
+
+		receiver := &transferReceive{
+			state:  receiveReceiving,
+			stream: stream,
+		}
+
+		totalBytesRead, err := receiver.receiveData()
+
+		require.NoError(t, err)
+		assert.Equal(t, len(data), totalBytesRead)
+		assert.Greater(t, stream.readCalls, 1)
+	})
+
+	t.Run("handles empty stream", func(t *testing.T) {
+		t.Parallel()
+
+		stream := &receiveTestStream{
+			reader: bytes.NewReader(nil),
+		}
+
+		receiver := &transferReceive{
+			state:  receiveReceiving,
+			stream: stream,
+		}
+
+		totalBytesRead, err := receiver.receiveData()
+
+		require.NoError(t, err)
+		assert.Zero(t, totalBytesRead)
+		assert.Equal(t, 1, stream.readCalls)
+	})
+
+	t.Run("rejects invalid state", func(t *testing.T) {
+		t.Parallel()
+
+		stream := &receiveTestStream{
+			reader: bytes.NewReader([]byte("data")),
+		}
+
+		receiver := &transferReceive{
+			state:  receiveInit,
+			stream: stream,
+		}
+
+		totalBytesRead, err := receiver.receiveData()
+
+		require.Error(t, err)
+		assert.Zero(t, totalBytesRead)
+		assert.Zero(t, stream.readCalls)
+	})
+
+	t.Run("propagates stream read error", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("stream read failed")
+
+		stream := &receiveTestStream{
+			readErr: expectedErr,
+		}
+
+		receiver := &transferReceive{
+			state:  receiveReceiving,
+			stream: stream,
+		}
+
+		totalBytesRead, err := receiver.receiveData()
+
+		require.ErrorIs(t, err, expectedErr)
+		assert.Zero(t, totalBytesRead)
+	})
+
+	t.Run("counts data returned together with EOF", func(t *testing.T) {
+		t.Parallel()
+
+		data := []byte("final bytes")
+		stream := &receiveTestStream{
+			reader: &singleReadResultReader{
+				data: data,
+				err:  io.EOF,
+			},
+		}
+
+		receiver := &transferReceive{
+			state:  receiveReceiving,
+			stream: stream,
+		}
+
+		totalBytesRead, err := receiver.receiveData()
+
+		require.NoError(t, err)
+		assert.Equal(t, len(data), totalBytesRead)
+	})
+
+	t.Run("counts data returned with a non-EOF error", func(t *testing.T) {
+		t.Parallel()
+
+		data := []byte("partial data")
+		expectedErr := errors.New("connection interrupted")
+
+		stream := &receiveTestStream{
+			reader: &singleReadResultReader{
+				data: data,
+				err:  expectedErr,
+			},
+		}
+
+		receiver := &transferReceive{
+			state:  receiveReceiving,
+			stream: stream,
+		}
+
+		totalBytesRead, err := receiver.receiveData()
+
+		require.ErrorIs(t, err, expectedErr)
+		assert.Equal(t, len(data), totalBytesRead)
 	})
 }
