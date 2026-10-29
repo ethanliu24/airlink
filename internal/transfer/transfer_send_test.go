@@ -803,4 +803,63 @@ func TestTransferSendRun(t *testing.T) {
 		assert.True(t, result.Accepted)
 		assert.Equal(t, sendError, sender.state)
 	})
+
+	t.Run("does not allow second call", func(t *testing.T) {
+		t.Parallel()
+
+		senderAddr := &net.UDPAddr{
+			IP:   net.ParseIP("192.0.2.10"),
+			Port: 12345,
+		}
+
+		reader := newMockTransferReader("hello.txt", []byte("hello"))
+
+		var responseBuffer bytes.Buffer
+		require.NoError(t, writeMessage(
+			&responseBuffer,
+			&models.TransferResponse{Accepted: true},
+		))
+		responseReader := bytes.NewReader(responseBuffer.Bytes())
+
+		var written bytes.Buffer
+		var readCalls, writeCalls int
+
+		stream := &mockStream{
+			readFunc: func(p []byte) (int, error) {
+				readCalls++
+				return responseReader.Read(p)
+			},
+			writeFunc: func(p []byte) (int, error) {
+				writeCalls++
+				return written.Write(p)
+			},
+			closeFunc: func() error {
+				return nil
+			},
+		}
+
+		sender := NewTransferSend(reader, stream, senderAddr)
+
+		// The first invocation should complete successfully.
+		firstResult := sender.run()
+
+		require.NotNil(t, firstResult)
+		require.NoError(t, firstResult.Err)
+		assert.True(t, firstResult.Accepted)
+		assert.Equal(t, sendDone, sender.state)
+
+		readsAfterFirstRun := readCalls
+		writesAfterFirstRun := writeCalls
+
+		// The second invocation should be rejected without performing I/O.
+		secondResult := sender.run()
+
+		require.NotNil(t, secondResult)
+		require.Error(t, secondResult.Err)
+		assert.ErrorContains(t, secondResult.Err, "already called")
+		assert.Equal(t, sendError, sender.state)
+
+		assert.Equal(t, readsAfterFirstRun, readCalls)
+		assert.Equal(t, writesAfterFirstRun, writeCalls)
+	})
 }

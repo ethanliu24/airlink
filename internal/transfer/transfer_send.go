@@ -36,6 +36,7 @@ type transferSend struct {
 	reader     file.Reader
 	stream     Stream
 	senderAddr net.Addr
+	consumed   bool
 }
 
 type sendResult struct {
@@ -48,10 +49,16 @@ type sendResult struct {
 // This function should only be called once per TransferSend
 // Assumes transferSend is properly initialized
 func (s *transferSend) run() *sendResult {
-	// TODO make sure this function is called once max per TransferSend
 	var accepted bool
 	var rejectReason *string
 	var sendErr error
+
+	if s.consumed {
+		sendErr = fmt.Errorf("<run> already called on a transferSend")
+		s.state = sendError
+	}
+
+	s.consumed = true
 
 outer:
 	for {
@@ -234,10 +241,11 @@ func (s *transferSend) sendData() error {
 // Assume caller will handle opening and closing the file and stream
 func NewTransferSend(reader file.Reader, stream Stream, senderAddr net.Addr) *transferSend {
 	return &transferSend{
-		state: sendInit,
-		response: &models.TransferResponse{},
-		reader: reader,
-		stream: stream,
+		state:      sendInit,
+		response:   &models.TransferResponse{},
+		reader:     reader,
+		stream:     stream,
 		senderAddr: senderAddr,
+		consumed:   false,
 	}
 }
