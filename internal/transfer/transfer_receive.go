@@ -211,7 +211,7 @@ func (r *transferReceive) receiveData() (int, error) {
 	return totalBytesRead, nil
 }
 
-func NewTransferReceive(stream Stream) *transferReceive {
+func newTransferReceive(stream Stream) *transferReceive {
 	return &transferReceive{
 		state:    receiveInit,
 		request:  &models.TransferRequest{},

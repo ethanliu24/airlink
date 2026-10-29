@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -35,24 +34,11 @@ func (s *Sender) sendOverStream(stream Stream, filename string) error {
 
 	defer reader.Close()
 
-	buf := make([]byte, FILE_READ_CHUNK_SIZE_BYTES)
-	for {
-		bytesRead, err := reader.Read(buf)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
+	send := newTransferSend(reader, stream, s.addr)
+	result := send.run()
 
-			return err
-		}
-
-		if bytesRead > 0 {
-			_, err := stream.Write(buf[:bytesRead])
-
-			if err != nil {
-				return err
-			}
-		}
+	if result.Err != nil {
+		return err
 	}
 
 	return nil

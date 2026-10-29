@@ -36,7 +36,6 @@ func printToTerminal(format string, a ...any) {
 
 // Run the commands in two terminals:
 // go run cmd/test/main.go --sender=true
-// go run cmd/test/main.go --sender=false
 // go run cmd/test/main.go --sender=false > tmp/listener.txt
 func main() {
 	isSender := flag.Bool("sender", false, "whether the node focuses on listening or sending")
