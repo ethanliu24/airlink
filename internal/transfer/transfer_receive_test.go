@@ -3,7 +3,6 @@ package transfer
 import (
 	"airlink/internal/transfer/models"
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"io"
 	"testing"
@@ -62,16 +61,14 @@ func newReceiveRequestReader(
 }
 
 func newInvalidReceiveMessageReader() *bytes.Reader {
-	header := make([]byte, 4)
-	binary.BigEndian.PutUint32(header, 1)
-
-	return bytes.NewReader(append(header, 0xff))
+	// Four-byte length header followed by invalid protobuf data.
+	return bytes.NewReader([]byte{0, 0, 0, 1, 0xff})
 }
 
 func TestTransferReceiveRun(t *testing.T) {
 	t.Parallel()
 
-	t.Run("ingests request and processes it", func(t *testing.T) {
+	t.Run("ingests request and sends accepted response", func(t *testing.T) {
 		t.Parallel()
 
 		expected := &models.TransferRequest{
@@ -87,8 +84,9 @@ func TestTransferReceiveRun(t *testing.T) {
 		}
 
 		receiver := &transferReceive{
-			state:  receiveInit,
-			stream: stream,
+			state:   receiveInit,
+			request: &models.TransferRequest{},
+			stream:  stream,
 		}
 
 		result := receiver.run()
@@ -96,10 +94,9 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
 
-		assert.Equal(t, receiveRespond, receiver.state)
+		assert.Equal(t, receiveReceiving, receiver.state)
 		assert.True(t, receiver.consumed)
 
-		require.NotNil(t, receiver.request)
 		require.NotNil(t, result.Request)
 		require.NotNil(t, result.Response)
 
@@ -109,13 +106,21 @@ func TestTransferReceiveRun(t *testing.T) {
 		assert.Equal(t, expected.GetMime(), result.Request.GetMime())
 		assert.Equal(t, expected.GetSenderIp(), result.Request.GetSenderIp())
 
-		// processResponse currently accepts every request.
 		assert.True(t, result.Response.GetAccepted())
 		assert.Empty(t, result.Response.GetRejectReason())
-		assert.Zero(t, stream.writeCalls)
+		assert.Nil(t, result.DestinationPath)
+
+		// The response should have been serialized to the stream.
+		assert.NotZero(t, stream.written.Len())
+
+		receivedResponse := &models.TransferResponse{}
+		err := readMessage(bytes.NewReader(stream.written.Bytes()), receivedResponse)
+
+		require.NoError(t, err)
+		assert.True(t, receivedResponse.GetAccepted())
 	})
 
-	t.Run("transitions to error when stream read fails", func(t *testing.T) {
+	t.Run("transitions to error when reading request fails", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("stream read failed")
@@ -125,8 +130,9 @@ func TestTransferReceiveRun(t *testing.T) {
 		}
 
 		receiver := &transferReceive{
-			state:  receiveInit,
-			stream: stream,
+			state:   receiveInit,
+			request: &models.TransferRequest{},
+			stream:  stream,
 		}
 
 		result := receiver.run()
@@ -136,11 +142,12 @@ func TestTransferReceiveRun(t *testing.T) {
 
 		assert.Equal(t, receiveError, receiver.state)
 		assert.True(t, receiver.consumed)
-		assert.Nil(t, result.Request)
+		assert.NotNil(t, result.Request)
 		assert.Nil(t, result.Response)
+		assert.Zero(t, stream.writeCalls)
 	})
 
-	t.Run("transitions to error when protobuf is invalid", func(t *testing.T) {
+	t.Run("transitions to error when request protobuf is invalid", func(t *testing.T) {
 		t.Parallel()
 
 		stream := &receiveTestStream{
@@ -148,8 +155,9 @@ func TestTransferReceiveRun(t *testing.T) {
 		}
 
 		receiver := &transferReceive{
-			state:  receiveInit,
-			stream: stream,
+			state:   receiveInit,
+			request: &models.TransferRequest{},
+			stream:  stream,
 		}
 
 		result := receiver.run()
@@ -158,8 +166,35 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.Error(t, result.Err)
 
 		assert.Equal(t, receiveError, receiver.state)
-		assert.Nil(t, result.Request)
 		assert.Nil(t, result.Response)
+		assert.Zero(t, stream.writeCalls)
+	})
+
+	t.Run("transitions to error when sending response fails", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("stream write failed")
+
+		stream := &receiveTestStream{
+			reader:   newReceiveRequestReader(t, &models.TransferRequest{Filename: "hello.txt"}),
+			writeErr: expectedErr,
+		}
+
+		receiver := &transferReceive{
+			state:   receiveInit,
+			request: &models.TransferRequest{},
+			stream:  stream,
+		}
+
+		result := receiver.run()
+
+		require.NotNil(t, result)
+		require.ErrorIs(t, result.Err, expectedErr)
+
+		assert.Equal(t, receiveError, receiver.state)
+		require.NotNil(t, result.Request)
+		require.NotNil(t, result.Response)
+		assert.True(t, result.Response.GetAccepted())
 	})
 
 	t.Run("rejects a second invocation", func(t *testing.T) {
@@ -173,16 +208,18 @@ func TestTransferReceiveRun(t *testing.T) {
 		}
 
 		receiver := &transferReceive{
-			state:  receiveInit,
-			stream: stream,
+			state:   receiveInit,
+			request: &models.TransferRequest{},
+			stream:  stream,
 		}
 
 		firstResult := receiver.run()
 
 		require.NoError(t, firstResult.Err)
-		assert.Equal(t, receiveRespond, receiver.state)
+		assert.Equal(t, receiveReceiving, receiver.state)
 
 		readCallsAfterFirstRun := stream.readCalls
+		writeCallsAfterFirstRun := stream.writeCalls
 
 		secondResult := receiver.run()
 
@@ -190,6 +227,7 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.ErrorContains(t, secondResult.Err, "already called")
 		assert.Equal(t, receiveError, receiver.state)
 		assert.Equal(t, readCallsAfterFirstRun, stream.readCalls)
+		assert.Equal(t, writeCallsAfterFirstRun, stream.writeCalls)
 	})
 
 	t.Run("stops when already done", func(t *testing.T) {
@@ -242,19 +280,18 @@ func TestIngestRequest(t *testing.T) {
 		}
 
 		receiver := &transferReceive{
-			state:  receiveIngestingRequest,
-			stream: stream,
+			state:   receiveIngestingRequest,
+			request: &models.TransferRequest{},
+			stream:  stream,
 		}
 
-		request, err := receiver.ingestRequst()
+		err := receiver.ingestRequst()
 
 		require.NoError(t, err)
-		require.NotNil(t, request)
-
-		assert.Equal(t, expected.GetFilename(), request.GetFilename())
-		assert.Equal(t, expected.GetExtension(), request.GetExtension())
-		assert.Equal(t, expected.GetFileSize(), request.GetFileSize())
-		assert.Equal(t, expected.GetMime(), request.GetMime())
+		assert.Equal(t, expected.GetFilename(), receiver.request.GetFilename())
+		assert.Equal(t, expected.GetExtension(), receiver.request.GetExtension())
+		assert.Equal(t, expected.GetFileSize(), receiver.request.GetFileSize())
+		assert.Equal(t, expected.GetMime(), receiver.request.GetMime())
 	})
 
 	t.Run("rejects invalid state", func(t *testing.T) {
@@ -263,14 +300,30 @@ func TestIngestRequest(t *testing.T) {
 		stream := &receiveTestStream{}
 
 		receiver := &transferReceive{
-			state:  receiveInit,
+			state:   receiveInit,
+			request: &models.TransferRequest{},
+			stream:  stream,
+		}
+
+		err := receiver.ingestRequst()
+
+		require.Error(t, err)
+		assert.Zero(t, stream.readCalls)
+	})
+
+	t.Run("rejects nil request", func(t *testing.T) {
+		t.Parallel()
+
+		stream := &receiveTestStream{}
+
+		receiver := &transferReceive{
+			state:  receiveIngestingRequest,
 			stream: stream,
 		}
 
-		request, err := receiver.ingestRequst()
+		err := receiver.ingestRequst()
 
 		require.Error(t, err)
-		assert.Nil(t, request)
 		assert.Zero(t, stream.readCalls)
 	})
 
@@ -281,15 +334,15 @@ func TestIngestRequest(t *testing.T) {
 
 		receiver := &transferReceive{
 			state: receiveIngestingRequest,
+			request: &models.TransferRequest{},
 			stream: &receiveTestStream{
 				readErr: expectedErr,
 			},
 		}
 
-		request, err := receiver.ingestRequst()
+		err := receiver.ingestRequst()
 
 		require.ErrorIs(t, err, expectedErr)
-		assert.Nil(t, request)
 	})
 
 	t.Run("rejects malformed protobuf", func(t *testing.T) {
@@ -297,15 +350,15 @@ func TestIngestRequest(t *testing.T) {
 
 		receiver := &transferReceive{
 			state: receiveIngestingRequest,
+			request: &models.TransferRequest{},
 			stream: &receiveTestStream{
 				reader: newInvalidReceiveMessageReader(),
 			},
 		}
 
-		request, err := receiver.ingestRequst()
+		err := receiver.ingestRequst()
 
 		require.Error(t, err)
-		assert.Nil(t, request)
 	})
 }
 
@@ -316,6 +369,7 @@ func TestProcessResponse(t *testing.T) {
 		t.Parallel()
 
 		receiver := &transferReceive{
+			state: receiveProcessingRequest,
 			request: &models.TransferRequest{
 				Filename: "hello.txt",
 				FileSize: 5,
@@ -326,8 +380,86 @@ func TestProcessResponse(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, response)
-
 		assert.True(t, response.GetAccepted())
 		assert.Empty(t, response.GetRejectReason())
+	})
+
+	t.Run("rejects invalid state", func(t *testing.T) {
+		t.Parallel()
+
+		receiver := &transferReceive{
+			state: receiveInit,
+		}
+
+		response, err := receiver.processResponse()
+
+		require.Error(t, err)
+		assert.Nil(t, response)
+	})
+}
+
+func TestSendResponse(t *testing.T) {
+	t.Parallel()
+
+	t.Run("writes response successfully", func(t *testing.T) {
+		t.Parallel()
+
+		stream := &receiveTestStream{}
+
+		receiver := &transferReceive{
+			state:  receiveRespond,
+			stream: stream,
+			response: &models.TransferResponse{
+				Accepted: true,
+			},
+		}
+
+		err := receiver.sendResponse()
+
+		require.NoError(t, err)
+		assert.NotZero(t, stream.written.Len())
+
+		received := &models.TransferResponse{}
+		err = readMessage(bytes.NewReader(stream.written.Bytes()), received)
+
+		require.NoError(t, err)
+		assert.True(t, received.GetAccepted())
+	})
+
+	t.Run("rejects invalid state", func(t *testing.T) {
+		t.Parallel()
+
+		stream := &receiveTestStream{}
+
+		receiver := &transferReceive{
+			state:  receiveInit,
+			stream: stream,
+			response: &models.TransferResponse{
+				Accepted: true,
+			},
+		}
+
+		err := receiver.sendResponse()
+
+		require.Error(t, err)
+		assert.Zero(t, stream.writeCalls)
+	})
+
+	t.Run("propagates stream write error", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("stream write failed")
+
+		receiver := &transferReceive{
+			state:  receiveRespond,
+			stream: &receiveTestStream{writeErr: expectedErr},
+			response: &models.TransferResponse{
+				Accepted: true,
+			},
+		}
+
+		err := receiver.sendResponse()
+
+		require.ErrorIs(t, err, expectedErr)
 	})
 }
