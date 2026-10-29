@@ -129,7 +129,7 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
 
-		assert.Equal(t, receiveReceiving, receiver.state)
+		assert.Equal(t, receiveDone, receiver.state)
 		assert.True(t, receiver.consumed)
 
 		require.NotNil(t, result.Request)
@@ -251,7 +251,7 @@ func TestTransferReceiveRun(t *testing.T) {
 		firstResult := receiver.run()
 
 		require.NoError(t, firstResult.Err)
-		assert.Equal(t, receiveReceiving, receiver.state)
+		assert.Equal(t, receiveDone, receiver.state)
 
 		readCallsAfterFirstRun := stream.readCalls
 		writeCallsAfterFirstRun := stream.writeCalls
