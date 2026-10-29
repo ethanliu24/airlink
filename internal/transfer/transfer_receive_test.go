@@ -6,11 +6,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"airlink/internal/transfer/models"
-	"bytes"
-	"encoding/binary"
-	"errors"
-	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -91,21 +86,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			reader: newReceiveRequestReader(t, expected),
 		}
 
-		expected := &models.TransferRequest{
-			Filename:  "hello.txt",
-			Extension: ".txt",
-			FileSize:  5,
-			Mime:      "text/plain",
-			SenderIp:  "192.0.2.10",
-		}
-
-		stream := &receiveTestStream{
-			reader: newReceiveRequestReader(t, expected),
-		}
-
 		receiver := &transferReceive{
-			state:  receiveInit,
-			stream: stream,
 			state:  receiveInit,
 			stream: stream,
 		}
@@ -194,12 +175,9 @@ func TestTransferReceiveRun(t *testing.T) {
 		receiver := &transferReceive{
 			state:  receiveInit,
 			stream: stream,
-			state:  receiveInit,
-			stream: stream,
 		}
 
 		firstResult := receiver.run()
-
 
 		require.NoError(t, firstResult.Err)
 		assert.Equal(t, receiveRespond, receiver.state)
@@ -211,7 +189,6 @@ func TestTransferReceiveRun(t *testing.T) {
 		require.NotNil(t, secondResult)
 		require.ErrorContains(t, secondResult.Err, "already called")
 		assert.Equal(t, receiveError, receiver.state)
-		assert.Equal(t, readCallsAfterFirstRun, stream.readCalls)
 		assert.Equal(t, readCallsAfterFirstRun, stream.readCalls)
 	})
 
@@ -239,7 +216,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			stream: &receiveTestStream{},
 		}
 
-		request, err := receiver.ingestRequst()
+		result := receiver.run()
 
 		require.NotNil(t, result)
 		require.ErrorContains(t, result.Err, "invalid transfer receive state")
