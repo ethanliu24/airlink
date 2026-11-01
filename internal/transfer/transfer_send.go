@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -139,7 +140,13 @@ func (s *transferSend) initRequest() (*models.TransferRequest, error) {
 		return nil, err
 	}
 
+	uuid, err := uuid.NewV7()
+	if err != nil {
+		return nil, err
+	}
+
 	return &models.TransferRequest{
+		Id:            uuid.String(),
 		Filename:      stat.Name(),
 		Extension:     filepath.Ext(stat.Name()),
 		FileSize:      uint64(stat.Size()),
