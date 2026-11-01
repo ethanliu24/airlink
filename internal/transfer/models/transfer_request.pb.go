@@ -24,17 +24,18 @@ const (
 
 type TransferRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	ProtocolVersion uint32                 `protobuf:"varint,1,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
-	Filename        string                 `protobuf:"bytes,2,opt,name=filename,proto3" json:"filename,omitempty"`
-	Extension       string                 `protobuf:"bytes,3,opt,name=extension,proto3" json:"extension,omitempty"`
-	FileSize        uint64                 `protobuf:"varint,4,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
-	CreatedAt       *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	ModifiedAt      *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=modified_at,json=modifiedAt,proto3" json:"modified_at,omitempty"`
-	Mime            string                 `protobuf:"bytes,7,opt,name=mime,proto3" json:"mime,omitempty"`
-	SenderIp        string                 `protobuf:"bytes,8,opt,name=sender_ip,json=senderIp,proto3" json:"sender_ip,omitempty"`
-	SenderName      string                 `protobuf:"bytes,9,opt,name=sender_name,json=senderName,proto3" json:"sender_name,omitempty"`
-	ClientName      string                 `protobuf:"bytes,10,opt,name=client_name,json=clientName,proto3" json:"client_name,omitempty"`
-	ClientVersion   string                 `protobuf:"bytes,11,opt,name=client_version,json=clientVersion,proto3" json:"client_version,omitempty"`
+	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ProtocolVersion uint32                 `protobuf:"varint,2,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	Filename        string                 `protobuf:"bytes,3,opt,name=filename,proto3" json:"filename,omitempty"`
+	Extension       string                 `protobuf:"bytes,4,opt,name=extension,proto3" json:"extension,omitempty"`
+	FileSize        uint64                 `protobuf:"varint,5,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
+	CreatedAt       *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	ModifiedAt      *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=modified_at,json=modifiedAt,proto3" json:"modified_at,omitempty"`
+	Mime            string                 `protobuf:"bytes,8,opt,name=mime,proto3" json:"mime,omitempty"`
+	SenderIp        string                 `protobuf:"bytes,9,opt,name=sender_ip,json=senderIp,proto3" json:"sender_ip,omitempty"`
+	SenderName      string                 `protobuf:"bytes,10,opt,name=sender_name,json=senderName,proto3" json:"sender_name,omitempty"`
+	ClientName      string                 `protobuf:"bytes,11,opt,name=client_name,json=clientName,proto3" json:"client_name,omitempty"`
+	ClientVersion   string                 `protobuf:"bytes,12,opt,name=client_version,json=clientVersion,proto3" json:"client_version,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -67,6 +68,13 @@ func (x *TransferRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use TransferRequest.ProtoReflect.Descriptor instead.
 func (*TransferRequest) Descriptor() ([]byte, []int) {
 	return file_internal_transfer_models_transfer_request_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *TransferRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
 }
 
 func (x *TransferRequest) GetProtocolVersion() uint32 {
@@ -150,24 +158,25 @@ var File_internal_transfer_models_transfer_request_proto protoreflect.FileDescri
 
 const file_internal_transfer_models_transfer_request_proto_rawDesc = "" +
 	"\n" +
-	"/internal/transfer/models/transfer_request.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa5\x03\n" +
-	"\x0fTransferRequest\x12)\n" +
-	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x1a\n" +
-	"\bfilename\x18\x02 \x01(\tR\bfilename\x12\x1c\n" +
-	"\textension\x18\x03 \x01(\tR\textension\x12\x1b\n" +
-	"\tfile_size\x18\x04 \x01(\x04R\bfileSize\x129\n" +
+	"/internal/transfer/models/transfer_request.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb5\x03\n" +
+	"\x0fTransferRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12)\n" +
+	"\x10protocol_version\x18\x02 \x01(\rR\x0fprotocolVersion\x12\x1a\n" +
+	"\bfilename\x18\x03 \x01(\tR\bfilename\x12\x1c\n" +
+	"\textension\x18\x04 \x01(\tR\textension\x12\x1b\n" +
+	"\tfile_size\x18\x05 \x01(\x04R\bfileSize\x129\n" +
 	"\n" +
-	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12;\n" +
-	"\vmodified_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12;\n" +
+	"\vmodified_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"modifiedAt\x12\x12\n" +
-	"\x04mime\x18\a \x01(\tR\x04mime\x12\x1b\n" +
-	"\tsender_ip\x18\b \x01(\tR\bsenderIp\x12\x1f\n" +
-	"\vsender_name\x18\t \x01(\tR\n" +
-	"senderName\x12\x1f\n" +
-	"\vclient_name\x18\n" +
+	"\x04mime\x18\b \x01(\tR\x04mime\x12\x1b\n" +
+	"\tsender_ip\x18\t \x01(\tR\bsenderIp\x12\x1f\n" +
+	"\vsender_name\x18\n" +
 	" \x01(\tR\n" +
+	"senderName\x12\x1f\n" +
+	"\vclient_name\x18\v \x01(\tR\n" +
 	"clientName\x12%\n" +
-	"\x0eclient_version\x18\v \x01(\tR\rclientVersionB\"Z airlink/internal/transfer/modelsb\x06proto3"
+	"\x0eclient_version\x18\f \x01(\tR\rclientVersionB\"Z airlink/internal/transfer/modelsb\x06proto3"
 
 var (
 	file_internal_transfer_models_transfer_request_proto_rawDescOnce sync.Once
