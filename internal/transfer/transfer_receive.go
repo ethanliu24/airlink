@@ -144,6 +144,7 @@ func (r *transferReceive) processResponse() (*models.TransferResponse, string, e
 	}
 
 	return &models.TransferResponse{
+		Id:           r.request.Id,
 		Accepted:     true,
 		RejectReason: nil,
 	}, destinationPath, nil
@@ -213,8 +214,8 @@ func (r *transferReceive) receiveData() (int, error) {
 
 func newTransferReceive(stream Stream) *transferReceive {
 	return &transferReceive{
-		state:    receiveInit,
-		request:  &models.TransferRequest{},
-		stream:   stream,
+		state:   receiveInit,
+		request: &models.TransferRequest{},
+		stream:  stream,
 	}
 }

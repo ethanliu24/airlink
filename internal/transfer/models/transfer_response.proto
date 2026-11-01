@@ -5,8 +5,9 @@ import "google/protobuf/timestamp.proto";
 option go_package = "airlink/internal/transfer/models";
 
 message TransferResponse {
-	uint32 protocol_version = 1;
+    string id = 1;
+	uint32 protocol_version = 2;
 
-    bool accepted = 2;
-    optional string reject_reason = 3;
+    bool accepted = 3;
+    optional string reject_reason = 4;
 }
