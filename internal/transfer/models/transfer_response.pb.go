@@ -24,9 +24,10 @@ const (
 
 type TransferResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	ProtocolVersion uint32                 `protobuf:"varint,1,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
-	Accepted        bool                   `protobuf:"varint,2,opt,name=accepted,proto3" json:"accepted,omitempty"`
-	RejectReason    *string                `protobuf:"bytes,3,opt,name=reject_reason,json=rejectReason,proto3,oneof" json:"reject_reason,omitempty"`
+	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ProtocolVersion uint32                 `protobuf:"varint,2,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	Accepted        bool                   `protobuf:"varint,3,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	RejectReason    *string                `protobuf:"bytes,4,opt,name=reject_reason,json=rejectReason,proto3,oneof" json:"reject_reason,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -61,6 +62,13 @@ func (*TransferResponse) Descriptor() ([]byte, []int) {
 	return file_internal_transfer_models_transfer_response_proto_rawDescGZIP(), []int{0}
 }
 
+func (x *TransferResponse) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
 func (x *TransferResponse) GetProtocolVersion() uint32 {
 	if x != nil {
 		return x.ProtocolVersion
@@ -86,11 +94,12 @@ var File_internal_transfer_models_transfer_response_proto protoreflect.FileDescr
 
 const file_internal_transfer_models_transfer_response_proto_rawDesc = "" +
 	"\n" +
-	"0internal/transfer/models/transfer_response.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x95\x01\n" +
-	"\x10TransferResponse\x12)\n" +
-	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x1a\n" +
-	"\baccepted\x18\x02 \x01(\bR\baccepted\x12(\n" +
-	"\rreject_reason\x18\x03 \x01(\tH\x00R\frejectReason\x88\x01\x01B\x10\n" +
+	"0internal/transfer/models/transfer_response.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa5\x01\n" +
+	"\x10TransferResponse\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12)\n" +
+	"\x10protocol_version\x18\x02 \x01(\rR\x0fprotocolVersion\x12\x1a\n" +
+	"\baccepted\x18\x03 \x01(\bR\baccepted\x12(\n" +
+	"\rreject_reason\x18\x04 \x01(\tH\x00R\frejectReason\x88\x01\x01B\x10\n" +
 	"\x0e_reject_reasonB\"Z airlink/internal/transfer/modelsb\x06proto3"
 
 var (
