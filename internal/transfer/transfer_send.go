@@ -37,6 +37,7 @@ type transferSend struct {
 	reader     file.Reader
 	stream     Stream
 	senderAddr net.Addr
+	consumed   bool
 }
 
 type sendResult struct {
@@ -52,6 +53,13 @@ func (s *transferSend) run() *sendResult {
 	var accepted bool
 	var rejectReason *string
 	var sendErr error
+
+	if s.consumed {
+		sendErr = fmt.Errorf("<run> already called on a transferSend")
+		s.state = sendError
+	}
+
+	s.consumed = true
 
 outer:
 	for {
@@ -245,5 +253,6 @@ func newTransferSend(reader file.Reader, stream Stream, senderAddr net.Addr) *tr
 		reader:     reader,
 		stream:     stream,
 		senderAddr: senderAddr,
+		consumed:   false,
 	}
 }
