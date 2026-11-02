@@ -19,6 +19,14 @@ const (
 	clientVersion = "0.0.1" // TODO handle this more properly
 )
 
+type transferResult interface {
+	isTransferResult()
+}
+
+type transfer interface {
+	run() transferResult
+}
+
 func messageIsNilError(operation string) error {
 	return fmt.Errorf("%s: message is nil", operation)
 }
