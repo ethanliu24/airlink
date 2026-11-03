@@ -5,19 +5,41 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 )
 
 // Send protobuf schema data in format [ 4 byte header, length of data ][ data ]
 const (
-	msgHeaderLengthBytes = 4
+	msgHeaderLengthBytes  = 4
 	maxMessageLengthBytes = 8 * 1024
-	writeOperation = "transfer protocol write"
-	readOperation = "transfer protocol read"
-	senderName = "Bob" // TODO handle this more properly
-	clientName = "airlink" // TODO handle this more properly
-	clientVersion = "0.0.1" // TODO handle this more properly
+	writeOperation        = "transfer protocol write"
+	readOperation         = "transfer protocol read"
+	senderName            = "Bob"     // TODO handle this more properly
+	clientName            = "airlink" // TODO handle this more properly
+	clientVersion         = "0.0.1"   // TODO handle this more properly
 )
+
+type TransferId = string
+
+type TransferResult interface {
+	isTransferResult()
+}
+
+type transfer interface {
+	run() TransferResult
+}
+
+type generateIdTransferFunc func() (TransferId, error)
+
+func generateTransferId() (TransferId, error) {
+	uuid, err := uuid.NewV7()
+	if err != nil {
+		return "", err
+	}
+
+	return uuid.String(), nil
+}
 
 func messageIsNilError(operation string) error {
 	return fmt.Errorf("%s: message is nil", operation)

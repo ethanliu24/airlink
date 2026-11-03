@@ -46,10 +46,12 @@ type sendResult struct {
 	Err          error
 }
 
+func (s *sendResult) isTransferResult() {}
+
 // This should run synchronously
 // This function should only be called once per TransferSend
 // Assumes transferSend is properly initialized
-func (s *transferSend) run() *sendResult {
+func (s *transferSend) run() TransferResult {
 	var accepted bool
 	var rejectReason *string
 	var sendErr error

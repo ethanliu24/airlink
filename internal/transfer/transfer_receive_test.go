@@ -169,8 +169,10 @@ func TestTransferReceiveRun(t *testing.T) {
 
 		receiver := newTransferReceive(stream)
 
-		result := receiver.run()
+		receiveRes := receiver.run()
+		result, ok := receiveRes.(*receiveResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
 
@@ -209,8 +211,10 @@ func TestTransferReceiveRun(t *testing.T) {
 
 		receiver := newTransferReceive(stream)
 
-		result := receiver.run()
+		receiveRes := receiver.run()
+		result, ok := receiveRes.(*receiveResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
 		assert.Equal(t, receiveError, receiver.state)
@@ -227,8 +231,10 @@ func TestTransferReceiveRun(t *testing.T) {
 
 		receiver := newTransferReceive(stream)
 
-		result := receiver.run()
+		receiveRes := receiver.run()
+		result, ok := receiveRes.(*receiveResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.Error(t, result.Err)
 		assert.Equal(t, receiveError, receiver.state)
@@ -252,8 +258,10 @@ func TestTransferReceiveRun(t *testing.T) {
 
 		receiver := newTransferReceive(stream)
 
-		result := receiver.run()
+		receiveRes := receiver.run()
+		result, ok := receiveRes.(*receiveResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
 		assert.Equal(t, receiveError, receiver.state)
@@ -282,8 +290,10 @@ func TestTransferReceiveRun(t *testing.T) {
 
 		receiver := newTransferReceive(stream)
 
-		result := receiver.run()
+		receiveRes := receiver.run()
+		result, ok := receiveRes.(*receiveResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
 		assert.Equal(t, receiveError, receiver.state)
@@ -304,16 +314,20 @@ func TestTransferReceiveRun(t *testing.T) {
 
 		receiver := newTransferReceive(stream)
 
-		firstResult := receiver.run()
+		firstReceiveRes := receiver.run()
+		firstResult, ok := firstReceiveRes.(*receiveResult)
 
+		require.True(t, ok)
 		require.NoError(t, firstResult.Err)
 		assert.Equal(t, receiveDone, receiver.state)
 
 		readCalls := stream.readCalls
 		writeCalls := stream.writeCalls
 
-		secondResult := receiver.run()
+		secondReceiveRes := receiver.run()
+		secondResult, ok := secondReceiveRes.(*receiveResult)
 
+		require.True(t, ok)
 		require.NotNil(t, secondResult)
 		require.ErrorContains(t, secondResult.Err, "already called")
 		assert.Equal(t, receiveError, receiver.state)
@@ -329,8 +343,10 @@ func TestTransferReceiveRun(t *testing.T) {
 			stream: &receiveTestStream{},
 		}
 
-		result := receiver.run()
+		receiveRes := receiver.run()
+		result, ok := receiveRes.(*receiveResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
 		assert.Equal(t, receiveDone, receiver.state)
@@ -345,8 +361,10 @@ func TestTransferReceiveRun(t *testing.T) {
 			stream: &receiveTestStream{},
 		}
 
-		result := receiver.run()
+		receiveRes := receiver.run()
+		result, ok := receiveRes.(*receiveResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.ErrorContains(t, result.Err, "invalid transfer receive state")
 		assert.Equal(t, receiveError, receiver.state)

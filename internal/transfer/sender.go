@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"sync"
@@ -34,8 +35,13 @@ func (s *Sender) sendOverStream(stream Stream, filename string) error {
 
 	defer reader.Close()
 
-	send := newTransferSend(reader, stream, s.addr)
-	result := send.run()
+	transfer := newTransferSend(reader, stream, s.addr)
+	sendRes := transfer.run()
+	result, ok := sendRes.(*sendResult)
+
+	if !ok {
+		return fmt.Errorf("sendOverStream did not get *sendResult")
+	}
 
 	if result.Err != nil {
 		return result.Err
