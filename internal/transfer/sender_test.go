@@ -1,3 +1,4 @@
+
 package transfer
 
 import (
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +52,55 @@ func waitForSenderStreamClose(t *testing.T, done <-chan struct{}) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for transfer stream to close")
 	}
+}
+
+// newSenderTestStream creates a stream mock that safely tracks
+// how many times Close() is called.
+//
+// The done channel is closed only once, so duplicate Close calls
+// don't panic and can instead be detected with closeCount().
+func newSenderTestStream(
+	readFunc func([]byte) (int, error),
+	writeFunc func([]byte) (int, error),
+) (*mockStream, <-chan struct{}, func() int) {
+	done := make(chan struct{})
+
+	var (
+		closeOnce  sync.Once
+		closeMu    sync.Mutex
+		closeCount int
+	)
+
+	stream := &mockStream{
+		readFunc:  readFunc,
+		writeFunc: writeFunc,
+		closeFunc: func() error {
+			closeMu.Lock()
+			closeCount++
+			closeMu.Unlock()
+
+			closeOnce.Do(func() {
+				close(done)
+			})
+
+			return nil
+		},
+	}
+
+	getCloseCount := func() int {
+		closeMu.Lock()
+		defer closeMu.Unlock()
+
+		return closeCount
+	}
+
+	return stream, done, getCloseCount
+}
+
+func assertSenderStreamClosedOnce(t *testing.T, closeCount func() int) {
+	t.Helper()
+
+	assert.Equal(t, 1, closeCount(), "stream should be closed exactly once")
 }
 
 func TestNewSender(t *testing.T) {
@@ -97,16 +148,11 @@ func TestSend(t *testing.T) {
 
 		responseReader := newSenderAcceptedResponseReader(t)
 		var written bytes.Buffer
-		done := make(chan struct{})
 
-		stream := &mockStream{
-			readFunc: responseReader.Read,
-			writeFunc: written.Write,
-			closeFunc: func() error {
-				close(done)
-				return nil
-			},
-		}
+		stream, done, closeCount := newSenderTestStream(
+			responseReader.Read,
+			written.Write,
+		)
 
 		expectedConn := &mockConn{
 			openStreamFunc: func() (Stream, error) {
@@ -134,6 +180,7 @@ func TestSend(t *testing.T) {
 		require.NoError(t, err)
 
 		waitForSenderStreamClose(t, done)
+		assertSenderStreamClosedOnce(t, closeCount)
 
 		sender.mu.Lock()
 		conn, exists := sender.conns[addr.String()]
@@ -199,16 +246,11 @@ func TestSend(t *testing.T) {
 
 		responseReader := newSenderAcceptedResponseReader(t)
 		var written bytes.Buffer
-		done := make(chan struct{})
 
-		stream := &mockStream{
-			readFunc: responseReader.Read,
-			writeFunc: written.Write,
-			closeFunc: func() error {
-				close(done)
-				return nil
-			},
-		}
+		stream, done, closeCount := newSenderTestStream(
+			responseReader.Read,
+			written.Write,
+		)
 
 		conn := &mockConn{
 			openStreamFunc: func() (Stream, error) {
@@ -236,6 +278,7 @@ func TestSend(t *testing.T) {
 		require.NoError(t, err)
 
 		waitForSenderStreamClose(t, done)
+		assertSenderStreamClosedOnce(t, closeCount)
 
 		out := bytes.NewReader(written.Bytes())
 		request := &models.TransferRequest{}
@@ -251,24 +294,20 @@ func TestSend(t *testing.T) {
 		assert.Equal(t, "hello world", string(fileData))
 	})
 
-	t.Run("reader open error closes stream", func(t *testing.T) {
+	t.Run("reader open error closes stream exactly once", func(t *testing.T) {
 		addr := &net.UDPAddr{
 			IP:   net.ParseIP(SENDER_TEST_IP),
 			Port: 12345,
 		}
 
 		expectedErr := errors.New("reader failed")
-		done := make(chan struct{})
 
-		stream := &mockStream{
-			writeFunc: func(data []byte) (int, error) {
+		stream, done, closeCount := newSenderTestStream(
+			nil,
+			func(data []byte) (int, error) {
 				return len(data), nil
 			},
-			closeFunc: func() error {
-				close(done)
-				return nil
-			},
-		}
+		)
 
 		conn := &mockConn{
 			openStreamFunc: func() (Stream, error) {
@@ -296,26 +335,23 @@ func TestSend(t *testing.T) {
 		require.NoError(t, err)
 
 		waitForSenderStreamClose(t, done)
+		assertSenderStreamClosedOnce(t, closeCount)
 	})
 
-	t.Run("stream write error closes stream", func(t *testing.T) {
+	t.Run("stream write error closes stream exactly once", func(t *testing.T) {
 		addr := &net.UDPAddr{
 			IP:   net.ParseIP(SENDER_TEST_IP),
 			Port: 12345,
 		}
 
 		expectedErr := errors.New("stream write failed")
-		done := make(chan struct{})
 
-		stream := &mockStream{
-			writeFunc: func([]byte) (int, error) {
+		stream, done, closeCount := newSenderTestStream(
+			nil,
+			func([]byte) (int, error) {
 				return 0, expectedErr
 			},
-			closeFunc: func() error {
-				close(done)
-				return nil
-			},
-		}
+		)
 
 		conn := &mockConn{
 			openStreamFunc: func() (Stream, error) {
@@ -341,29 +377,25 @@ func TestSend(t *testing.T) {
 		require.NoError(t, err)
 
 		waitForSenderStreamClose(t, done)
+		assertSenderStreamClosedOnce(t, closeCount)
 	})
 
-	t.Run("response read error closes stream", func(t *testing.T) {
+	t.Run("response read error closes stream exactly once", func(t *testing.T) {
 		addr := &net.UDPAddr{
 			IP:   net.ParseIP(SENDER_TEST_IP),
 			Port: 12345,
 		}
 
 		expectedErr := errors.New("response read failed")
-		done := make(chan struct{})
 
-		stream := &mockStream{
-			writeFunc: func(data []byte) (int, error) {
-				return len(data), nil
-			},
-			readFunc: func([]byte) (int, error) {
+		stream, done, closeCount := newSenderTestStream(
+			func([]byte) (int, error) {
 				return 0, expectedErr
 			},
-			closeFunc: func() error {
-				close(done)
-				return nil
+			func(data []byte) (int, error) {
+				return len(data), nil
 			},
-		}
+		)
 
 		conn := &mockConn{
 			openStreamFunc: func() (Stream, error) {
@@ -391,20 +423,26 @@ func TestSend(t *testing.T) {
 		require.NoError(t, err)
 
 		waitForSenderStreamClose(t, done)
+		assertSenderStreamClosedOnce(t, closeCount)
 	})
 }
 
 func TestCleanup(t *testing.T) {
 	t.Parallel()
 
-	var closedConnections []string
+	var (
+		mu                sync.Mutex
+		closedConnections []string
+	)
 
 	conn1 := &mockConn{
 		closeWithErrFunc: func(
 			code quic.ApplicationErrorCode,
 			msg string,
 		) error {
+			mu.Lock()
 			closedConnections = append(closedConnections, "conn1")
+			mu.Unlock()
 
 			assert.Equal(t, quic.ApplicationErrorCode(0), code)
 			assert.Equal(t, "sender connection closed gracefully", msg)
@@ -418,7 +456,9 @@ func TestCleanup(t *testing.T) {
 			code quic.ApplicationErrorCode,
 			msg string,
 		) error {
+			mu.Lock()
 			closedConnections = append(closedConnections, "conn2")
+			mu.Unlock()
 
 			assert.Equal(t, quic.ApplicationErrorCode(0), code)
 			assert.Equal(t, "sender connection closed gracefully", msg)
@@ -437,7 +477,10 @@ func TestCleanup(t *testing.T) {
 	sender.Cleanup()
 
 	assert.Empty(t, sender.conns)
+
+	mu.Lock()
 	assert.ElementsMatch(t, []string{"conn1", "conn2"}, closedConnections)
+	mu.Unlock()
 }
 
 func TestCleanupEmpty(t *testing.T) {
