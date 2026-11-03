@@ -13,7 +13,7 @@ type Manager struct {
 	generateID generateIdTransferFunc
 }
 
-func (m *Manager) register(t transfer) (string, error) {
+func (m *Manager) register(t transfer) (TransferId, error) {
 	for range idGenRetryTimes {
 		id, err := m.generateID()
 		if err != nil {

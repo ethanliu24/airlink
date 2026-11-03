@@ -20,17 +20,19 @@ const (
 	clientVersion         = "0.0.1"   // TODO handle this more properly
 )
 
-type transferResult interface {
+type TransferId = string
+
+type TransferResult interface {
 	isTransferResult()
 }
 
 type transfer interface {
-	run() transferResult
+	run() TransferResult
 }
 
-type generateIdTransferFunc func() (string, error)
+type generateIdTransferFunc func() (TransferId, error)
 
-func generateTransferId() (string, error) {
+func generateTransferId() (TransferId, error) {
 	uuid, err := uuid.NewV7()
 	if err != nil {
 		return "", err
