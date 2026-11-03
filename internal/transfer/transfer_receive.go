@@ -41,10 +41,12 @@ type receiveResult struct {
 	Err             error
 }
 
+func (s *receiveResult) isTransferResult() {}
+
 // This should run synchronously
 // This function should only be called once per transferReceive
 // Assumes transferReceive is properly initialized
-func (r *transferReceive) run() *receiveResult {
+func (r *transferReceive) run() TransferResult {
 	var receiveErr error
 
 	if r.consumed {

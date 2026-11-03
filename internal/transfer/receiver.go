@@ -27,7 +27,12 @@ func handleStream(stream Stream) {
 	defer stream.Close()
 
 	receive := newTransferReceive(stream)
-	result := receive.run()
+	receiveRes := receive.run()
+	result, ok := receiveRes.(*receiveResult)
+
+	if !ok {
+		slog.Error("handleStream did not get *receiveResult")
+	}
 
 	if result.Err != nil {
 		slog.Error("transfer failed", "err", result.Err)
