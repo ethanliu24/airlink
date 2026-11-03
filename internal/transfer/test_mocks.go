@@ -121,6 +121,7 @@ func (l *mockListener) Close() error {
 type mockReader struct {
 	data    string
 	pointer int
+	closeFunc func() error
 }
 
 func (r *mockReader) Read(p []byte) (int, error) {
@@ -138,7 +139,11 @@ func (r *mockReader) Read(p []byte) (int, error) {
 }
 
 func (r *mockReader) Close() error {
-	return nil
+    if r.closeFunc != nil {
+        return r.closeFunc()
+    }
+
+    return nil
 }
 
 func (r *mockReader) Stat() (os.FileInfo, error) {

@@ -49,8 +49,9 @@ type sendResult struct {
 func (s *sendResult) isTransferResult() {}
 
 func (s *transferSend) run() TransferResult {
+	defer s.reader.Close()
 	defer s.stream.Close()
-	
+
 	var accepted bool
 	var rejectReason *string
 	var sendErr error
