@@ -33,7 +33,25 @@ func (m *Manager) Send(stream Stream, filename string) (TransferId, error) {
 		return "", err
 	}
 
-	go transfer.run()
+	go func() {
+		transfer.run()
+	}()
+
+	return id, nil
+}
+
+func (m *Manager) Receive(stream Stream) (TransferId, error) {
+	transfer := newTransferReceive(stream)
+	id, err := m.register(transfer)
+
+	if err != nil {
+		_ = stream.Close()
+		return "", err
+	}
+
+	go func() {
+		transfer.run()
+	}()
 
 	return id, nil
 }

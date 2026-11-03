@@ -5,7 +5,6 @@ import (
 	"airlink/internal/transfer/models"
 	"bytes"
 	"io"
-	// "net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -340,6 +339,127 @@ func TestManagerSend(t *testing.T) {
 
 		assert.EqualValues(t, 1, readerCloseCount.Load())
 		assert.EqualValues(t, 1, streamCloseCount.Load())
+
+		manager.mu.Lock()
+		assert.Empty(t, manager.transfers)
+		manager.mu.Unlock()
+	})
+}
+
+func TestManagerReceive(t *testing.T) {
+	t.Parallel()
+
+	t.Run("successful registration starts transfer", func(t *testing.T) {
+		t.Parallel()
+
+		const id = "transfer-123"
+
+		readStarted := make(chan struct{})
+		streamClosed := make(chan struct{})
+
+		var (
+			readOnce       sync.Once
+			closeOnce      sync.Once
+			streamCloseCount atomic.Int32
+		)
+
+		stream := &mockStream{
+			readFunc: func([]byte) (int, error) {
+				readOnce.Do(func() {
+					close(readStarted)
+				})
+				return 0, errors.New("mock stream read failed")
+			},
+			writeFunc: func(data []byte) (int, error) {
+				return len(data), nil
+			},
+			closeFunc: func() error {
+				streamCloseCount.Add(1)
+				closeOnce.Do(func() {
+					close(streamClosed)
+				})
+				return nil
+			},
+		}
+
+		manager := &Manager{
+			transfers: make(map[string]transfer),
+			generateID: func() (string, error) {
+				return id, nil
+			},
+		}
+
+		gotID, err := manager.Receive(stream)
+
+		require.NoError(t, err)
+		assert.Equal(t, TransferId(id), gotID)
+
+		// Verify registration.
+		manager.mu.Lock()
+		registeredTransfer, exists := manager.transfers[id]
+		manager.mu.Unlock()
+
+		require.True(t, exists)
+
+		_, isReceive := registeredTransfer.(*transferReceive)
+		assert.True(t, isReceive)
+
+		// Verify that the transfer started.
+		waitForManagerChannel(t, readStarted, "transfer read")
+
+		// The mock read fails, so the transfer should terminate
+		// and close its stream.
+		waitForManagerChannel(t, streamClosed, "stream")
+
+		assert.EqualValues(t, 1, streamCloseCount.Load())
+	})
+
+	t.Run("registration error closes stream", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("ID generation failed")
+
+		streamClosed := make(chan struct{})
+
+		var (
+			streamCloseCount atomic.Int32
+			closeOnce        sync.Once
+			readCalled       atomic.Bool
+		)
+
+		stream := &mockStream{
+			readFunc: func([]byte) (int, error) {
+				readCalled.Store(true)
+				return 0, io.EOF
+			},
+			writeFunc: func(data []byte) (int, error) {
+				return len(data), nil
+			},
+			closeFunc: func() error {
+				streamCloseCount.Add(1)
+				closeOnce.Do(func() {
+					close(streamClosed)
+				})
+				return nil
+			},
+		}
+
+		manager := &Manager{
+			transfers: make(map[string]transfer),
+			generateID: func() (string, error) {
+				return "", expectedErr
+			},
+		}
+
+		id, err := manager.Receive(stream)
+
+		require.ErrorIs(t, err, expectedErr)
+		assert.Empty(t, id)
+
+		waitForManagerChannel(t, streamClosed, "stream")
+
+		assert.EqualValues(t, 1, streamCloseCount.Load())
+		assert.False(t, readCalled.Load(), "transfer should not have started")
 
 		manager.mu.Lock()
 		assert.Empty(t, manager.transfers)
