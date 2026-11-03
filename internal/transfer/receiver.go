@@ -24,8 +24,6 @@ type Receiver struct {
 }
 
 func handleStream(stream Stream) {
-	defer stream.Close()
-
 	receive := newTransferReceive(stream)
 	receiveRes := receive.run()
 	result, ok := receiveRes.(*receiveResult)

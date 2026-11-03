@@ -26,10 +26,9 @@ type Sender struct {
 }
 
 func (s *Sender) sendOverStream(stream Stream, filename string) error {
-	defer stream.Close()
-
 	reader, err := s.openReader(filename)
 	if err != nil {
+		_ = stream.Close()
 		return err
 	}
 

@@ -47,6 +47,8 @@ func (s *receiveResult) isTransferResult() {}
 // This function should only be called once per transferReceive
 // Assumes transferReceive is properly initialized
 func (r *transferReceive) run() TransferResult {
+	defer r.stream.Close()
+	
 	var receiveErr error
 
 	if r.consumed {

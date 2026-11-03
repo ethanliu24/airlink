@@ -1,7 +1,9 @@
 package transfer
 
 import (
+	"airlink/internal/file"
 	"fmt"
+	"net"
 	"sync"
 )
 
@@ -10,7 +12,48 @@ const idGenRetryTimes = 3
 type Manager struct {
 	transfers  map[string]transfer
 	mu         sync.Mutex
+	addr       net.Addr
+	openReader file.OpenReaderFunc
 	generateID generateIdTransferFunc
+}
+
+func (m *Manager) Send(stream Stream, filename string) (TransferId, error) {
+	reader, err := m.openReader(filename)
+	if err != nil {
+		_ = stream.Close()
+		return "", err
+	}
+
+	transfer := newTransferSend(reader, stream, m.addr)
+	id, err := m.register(transfer)
+
+	if err != nil {
+		_ = reader.Close()
+		_ = stream.Close()
+		return "", err
+	}
+
+	go func() {
+		transfer.run()
+	}()
+
+	return id, nil
+}
+
+func (m *Manager) Receive(stream Stream) (TransferId, error) {
+	transfer := newTransferReceive(stream)
+	id, err := m.register(transfer)
+
+	if err != nil {
+		_ = stream.Close()
+		return "", err
+	}
+
+	go func() {
+		transfer.run()
+	}()
+
+	return id, nil
 }
 
 func (m *Manager) register(t transfer) (TransferId, error) {
