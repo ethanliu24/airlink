@@ -649,8 +649,10 @@ func TestTransferSendRun(t *testing.T) {
 		stream := &transferTestStream{readFrom: responseReader}
 		sender := newTransferSend(reader, stream, senderAddr)
 
-		result := sender.run()
+		sendRes := sender.run()
+		result, ok := sendRes.(*sendResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
 		assert.True(t, result.Accepted)
@@ -687,8 +689,10 @@ func TestTransferSendRun(t *testing.T) {
 		stream := &transferTestStream{readFrom: responseReader}
 		sender := newTransferSend(reader, stream, senderAddr)
 
-		result := sender.run()
+		sendRes := sender.run()
+		result, ok := sendRes.(*sendResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.NoError(t, result.Err)
 		assert.False(t, result.Accepted)
@@ -714,8 +718,10 @@ func TestTransferSendRun(t *testing.T) {
 		stream := &transferTestStream{}
 		sender := newTransferSend(reader, stream, senderAddr)
 
-		result := sender.run()
+		sendRes := sender.run()
+		result, ok := sendRes.(*sendResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
 		assert.Equal(t, sendError, sender.state)
@@ -731,8 +737,10 @@ func TestTransferSendRun(t *testing.T) {
 		stream := &transferTestStream{writeErr: expectedErr}
 		sender := newTransferSend(reader, stream, senderAddr)
 
-		result := sender.run()
+		sendRes := sender.run()
+		result, ok := sendRes.(*sendResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
 		assert.Equal(t, sendError, sender.state)
@@ -747,8 +755,10 @@ func TestTransferSendRun(t *testing.T) {
 		stream := &transferTestStream{readErr: expectedErr}
 		sender := newTransferSend(reader, stream, senderAddr)
 
-		result := sender.run()
+		sendRes := sender.run()
+		result, ok := sendRes.(*sendResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
 		assert.Equal(t, sendError, sender.state)
@@ -769,8 +779,10 @@ func TestTransferSendRun(t *testing.T) {
 		stream := &transferTestStream{readFrom: responseReader}
 		sender := newTransferSend(reader, stream, senderAddr)
 
-		result := sender.run()
+		sendRes := sender.run()
+		result, ok := sendRes.(*sendResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
 		assert.True(t, result.Accepted)
@@ -796,8 +808,10 @@ func TestTransferSendRun(t *testing.T) {
 		}
 		sender := newTransferSend(reader, stream, senderAddr)
 
-		result := sender.run()
+		sendRes := sender.run()
+		result, ok := sendRes.(*sendResult)
 
+		require.True(t, ok)
 		require.NotNil(t, result)
 		require.ErrorIs(t, result.Err, expectedErr)
 		assert.True(t, result.Accepted)
@@ -841,8 +855,10 @@ func TestTransferSendRun(t *testing.T) {
 		sender := newTransferSend(reader, stream, senderAddr)
 
 		// The first invocation should complete successfully.
-		firstResult := sender.run()
+		firstSendResult := sender.run()
+		firstResult, ok := firstSendResult.(*sendResult)
 
+		require.True(t, ok)
 		require.NotNil(t, firstResult)
 		require.NoError(t, firstResult.Err)
 		assert.True(t, firstResult.Accepted)
@@ -852,8 +868,10 @@ func TestTransferSendRun(t *testing.T) {
 		writesAfterFirstRun := writeCalls
 
 		// The second invocation should be rejected without performing I/O.
-		secondResult := sender.run()
+		secondSendResult := sender.run()
+		secondResult, ok := secondSendResult.(*sendResult)
 
+		require.True(t, ok)
 		require.NotNil(t, secondResult)
 		require.Error(t, secondResult.Err)
 		assert.ErrorContains(t, secondResult.Err, "already called")
