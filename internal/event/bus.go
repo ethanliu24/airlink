@@ -17,7 +17,7 @@ func (b *bus) cleanUp() {
 }
 
 // TODO Add size cap for safety, need to modify addEvent with select statement for non blocking
-func NewBus() *bus {
+func newBus() *bus {
 	return &bus{
 		queue: make(chan Event),
 	}
