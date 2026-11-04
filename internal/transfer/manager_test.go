@@ -209,7 +209,7 @@ func TestManagerSend(t *testing.T) {
 		manager.mu.Unlock()
 
 		require.True(t, exists)
-		_, isSend := registeredTransfer.(*transferSend)
+		_, isSend := registeredTransfer.(*send)
 		assert.True(t, isSend)
 
 		// Wait for asynchronous transfer completion.
@@ -401,7 +401,7 @@ func TestManagerReceive(t *testing.T) {
 
 		require.True(t, exists)
 
-		_, isReceive := registeredTransfer.(*transferReceive)
+		_, isReceive := registeredTransfer.(*receive)
 		assert.True(t, isReceive)
 
 		// Verify that the transfer started.

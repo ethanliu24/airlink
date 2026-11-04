@@ -26,7 +26,7 @@ func (m *Manager) Send(stream io.ReadWriteCloser, filename string) (TransferId, 
 		return "", err
 	}
 
-	transfer := newTransferSend(reader, stream, m.addr)
+	transfer := newSendTransfer(reader, stream, m.addr)
 	id, err := m.register(transfer)
 
 	if err != nil {
@@ -43,7 +43,7 @@ func (m *Manager) Send(stream io.ReadWriteCloser, filename string) (TransferId, 
 }
 
 func (m *Manager) Receive(stream io.ReadWriteCloser) (TransferId, error) {
-	transfer := newTransferReceive(stream)
+	transfer := newReceiveTransfer(stream)
 	id, err := m.register(transfer)
 
 	if err != nil {

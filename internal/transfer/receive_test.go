@@ -125,7 +125,7 @@ func TestNewTransferReceive(t *testing.T) {
 
 		stream := &receiveTestStream{}
 
-		receiver := newTransferReceive(stream)
+		receiver := newReceiveTransfer(stream)
 
 		require.NotNil(t, receiver)
 		assert.Equal(t, receiveInit, receiver.state)
@@ -138,7 +138,7 @@ func TestNewTransferReceive(t *testing.T) {
 	t.Run("accepts nil stream", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := newTransferReceive(nil)
+		receiver := newReceiveTransfer(nil)
 
 		require.NotNil(t, receiver)
 		assert.Equal(t, receiveInit, receiver.state)
@@ -167,7 +167,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			reader: newReceiveInput(t, expected, fileData),
 		}
 
-		receiver := newTransferReceive(stream)
+		receiver := newReceiveTransfer(stream)
 
 		receiveRes := receiver.run()
 		result, ok := receiveRes.(*receiveResult)
@@ -209,7 +209,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			readErr: expectedErr,
 		}
 
-		receiver := newTransferReceive(stream)
+		receiver := newReceiveTransfer(stream)
 
 		receiveRes := receiver.run()
 		result, ok := receiveRes.(*receiveResult)
@@ -229,7 +229,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			reader: newInvalidReceiveMessageReader(),
 		}
 
-		receiver := newTransferReceive(stream)
+		receiver := newReceiveTransfer(stream)
 
 		receiveRes := receiver.run()
 		result, ok := receiveRes.(*receiveResult)
@@ -256,7 +256,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			writeErr: expectedErr,
 		}
 
-		receiver := newTransferReceive(stream)
+		receiver := newReceiveTransfer(stream)
 
 		receiveRes := receiver.run()
 		result, ok := receiveRes.(*receiveResult)
@@ -288,7 +288,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			},
 		}
 
-		receiver := newTransferReceive(stream)
+		receiver := newReceiveTransfer(stream)
 
 		receiveRes := receiver.run()
 		result, ok := receiveRes.(*receiveResult)
@@ -312,7 +312,7 @@ func TestTransferReceiveRun(t *testing.T) {
 			reader: newReceiveInput(t, request, []byte("hello")),
 		}
 
-		receiver := newTransferReceive(stream)
+		receiver := newReceiveTransfer(stream)
 
 		firstReceiveRes := receiver.run()
 		firstResult, ok := firstReceiveRes.(*receiveResult)
@@ -338,7 +338,7 @@ func TestTransferReceiveRun(t *testing.T) {
 	t.Run("stops when already done", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state: receiveDone,
 			stream: &receiveTestStream{},
 		}
@@ -356,7 +356,7 @@ func TestTransferReceiveRun(t *testing.T) {
 	t.Run("handles invalid state", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:  receiveState("invalid"),
 			stream: &receiveTestStream{},
 		}
@@ -388,7 +388,7 @@ func TestIngestRequest(t *testing.T) {
 			reader: newReceiveInput(t, expected, nil),
 		}
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:   receiveIngestingRequest,
 			request: &models.TransferRequest{},
 			stream:  stream,
@@ -407,7 +407,7 @@ func TestIngestRequest(t *testing.T) {
 		t.Parallel()
 
 		stream := &receiveTestStream{}
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:   receiveInit,
 			request: &models.TransferRequest{},
 			stream:  stream,
@@ -423,7 +423,7 @@ func TestIngestRequest(t *testing.T) {
 		t.Parallel()
 
 		stream := &receiveTestStream{}
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:  receiveIngestingRequest,
 			stream: stream,
 		}
@@ -439,7 +439,7 @@ func TestIngestRequest(t *testing.T) {
 
 		expectedErr := errors.New("stream read failed")
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:   receiveIngestingRequest,
 			request: &models.TransferRequest{},
 			stream:  &receiveTestStream{readErr: expectedErr},
@@ -453,7 +453,7 @@ func TestIngestRequest(t *testing.T) {
 	t.Run("rejects malformed protobuf", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:   receiveIngestingRequest,
 			request: &models.TransferRequest{},
 			stream: &receiveTestStream{
@@ -473,7 +473,7 @@ func TestProcessResponse(t *testing.T) {
 	t.Run("accepts request by default and resolves destination", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state: receiveProcessingRequest,
 			request: &models.TransferRequest{
 				Filename: "hello.txt",
@@ -494,7 +494,7 @@ func TestProcessResponse(t *testing.T) {
 	t.Run("rejects invalid state", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state: receiveInit,
 		}
 
@@ -512,7 +512,7 @@ func TestResolveDestination(t *testing.T) {
 	t.Run("returns absolute path", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := newTransferReceive(&receiveTestStream{})
+		receiver := newReceiveTransfer(&receiveTestStream{})
 
 		destination, err := receiver.resolveDestination("report.txt")
 
@@ -528,7 +528,7 @@ func TestResolveDestination(t *testing.T) {
 	t.Run("strips directory components from filename", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := newTransferReceive(&receiveTestStream{})
+		receiver := newReceiveTransfer(&receiveTestStream{})
 
 		destination, err := receiver.resolveDestination("../outside.txt")
 		expectedDir, err := filepath.Abs(defaultDestinationDir)
@@ -548,7 +548,7 @@ func TestSendResponse(t *testing.T) {
 		t.Parallel()
 
 		stream := &receiveTestStream{}
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:  receiveRespond,
 			stream: stream,
 			response: &models.TransferResponse{
@@ -572,7 +572,7 @@ func TestSendResponse(t *testing.T) {
 		t.Parallel()
 
 		stream := &receiveTestStream{}
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:  receiveInit,
 			stream: stream,
 			response: &models.TransferResponse{
@@ -590,7 +590,7 @@ func TestSendResponse(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("stream write failed")
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:    receiveRespond,
 			stream:   &receiveTestStream{writeErr: expectedErr},
 			response: &models.TransferResponse{Accepted: true},
@@ -616,7 +616,7 @@ func TestReceiveData(t *testing.T) {
 			},
 		}
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state: receiveReceiving,
 			stream: stream,
 			destinationPath: "/tmp/output.txt",
@@ -636,7 +636,7 @@ func TestReceiveData(t *testing.T) {
 			reader: bytes.NewReader(nil),
 		}
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:  receiveReceiving,
 			stream: stream,
 		}
@@ -655,7 +655,7 @@ func TestReceiveData(t *testing.T) {
 			reader: bytes.NewReader([]byte("data")),
 		}
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:  receiveInit,
 			stream: stream,
 		}
@@ -673,7 +673,7 @@ func TestReceiveData(t *testing.T) {
 		expectedErr := errors.New("stream read failed")
 		stream := &receiveTestStream{readErr: expectedErr}
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:  receiveReceiving,
 			stream: stream,
 		}
@@ -695,7 +695,7 @@ func TestReceiveData(t *testing.T) {
 			},
 		}
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:  receiveReceiving,
 			stream: stream,
 		}
@@ -719,7 +719,7 @@ func TestReceiveData(t *testing.T) {
 			},
 		}
 
-		receiver := &transferReceive{
+		receiver := &receive{
 			state:  receiveReceiving,
 			stream: stream,
 		}
