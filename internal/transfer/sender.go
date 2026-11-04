@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"sync"
@@ -18,38 +17,18 @@ var MAX_HANDSHAKE_TIMEOUT_SECONDS = 3 * time.Second
 var FILE_READ_CHUNK_SIZE_BYTES = 1024 * 64
 
 type Sender struct {
-	dial       DialFunc
-	openReader file.OpenReaderFunc
-	mu         sync.Mutex
-	conns      map[string]Conn
-	addr       net.Addr
+	dial  DialFunc
+	mu    sync.Mutex
+	conns map[string]Conn
+	send  sendFunc
 }
 
+type sendFunc func(stream Stream, filename string) (TransferId, error)
+
 func (s *Sender) sendOverStream(stream Stream, filename string) error {
-	reader, err := s.openReader(filename)
+	_, err := s.send(stream, filename)
 	if err != nil {
-		_ = stream.Close()
 		return err
-	}
-
-	defer reader.Close()
-
-	transfer := newTransferSend(reader, stream, s.addr)
-	sendRes := transfer.run()
-	result, ok := sendRes.(*sendResult)
-
-	if !ok {
-		return fmt.Errorf("sendOverStream did not get *sendResult")
-	}
-
-	if result.Err != nil {
-		return result.Err
-	}
-
-	// TODO handle this
-	if !result.Accepted {
-		if result.RejectReason != nil {
-		}
 	}
 
 	return nil
@@ -109,7 +88,12 @@ func (s *Sender) Cleanup() {
 	}
 }
 
-func NewSender(transport *quic.Transport, openReader file.OpenReaderFunc, addr net.Addr) *Sender {
+func NewSender(
+	transport *quic.Transport,
+	openReader file.OpenReaderFunc,
+	addr net.Addr,
+	send sendFunc,
+) *Sender {
 	return &Sender{
 		dial: func(ctx context.Context, addr net.Addr, tlsConf *tls.Config, conf *quic.Config) (Conn, error) {
 			conn, err := transport.Dial(ctx, addr, tlsConf, conf)
@@ -121,8 +105,7 @@ func NewSender(transport *quic.Transport, openReader file.OpenReaderFunc, addr n
 				conn: conn,
 			}, nil
 		},
-		conns:      make(map[string]Conn),
-		openReader: openReader,
-		addr:       addr,
+		conns: make(map[string]Conn),
+		send: send,
 	}
 }
