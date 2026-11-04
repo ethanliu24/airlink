@@ -1,9 +1,11 @@
-package transfer
+package node
 
 import (
+	"airlink/internal/transfer"
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -20,11 +22,11 @@ func TestNewReceiver(t *testing.T) {
 
 	transport := &quic.Transport{}
 
-	receive := func(Stream) (TransferId, error) {
+	receive := func(io.ReadWriteCloser) (transfer.TransferId, error) {
 		return "transfer-123", nil
 	}
 
-	receiver := NewReceiver(transport, receive)
+	receiver := newReceiver(transport, receive)
 
 	require.NotNil(t, receiver)
 	require.NotNil(t, receiver.listen)
@@ -45,8 +47,8 @@ func TestHandleStream(t *testing.T) {
 
 		received := make(chan Stream, 1)
 
-		receiver := &Receiver{
-			receive: func(got Stream) (TransferId, error) {
+		receiver := &receiver{
+			receive: func(got io.ReadWriteCloser) (transfer.TransferId, error) {
 				received <- got
 				return "transfer-123", nil
 			},
@@ -70,8 +72,8 @@ func TestHandleStream(t *testing.T) {
 
 		called := false
 
-		receiver := &Receiver{
-			receive: func(got Stream) (TransferId, error) {
+		receiver := &receiver{
+			receive: func(got io.ReadWriteCloser) (transfer.TransferId, error) {
 				assert.Same(t, stream, got)
 				called = true
 				return "", expectedErr
@@ -104,7 +106,7 @@ func TestHandleConnection(t *testing.T) {
 			},
 		}
 
-		receiver := &Receiver{
+		receiver := &receiver{
 			conns: map[Conn]struct{}{
 				conn: {},
 			},
@@ -140,7 +142,7 @@ func TestHandleConnection(t *testing.T) {
 			},
 		}
 
-		receiver := &Receiver{
+		receiver := &receiver{
 			conns: map[Conn]struct{}{
 				conn: {},
 			},
@@ -187,9 +189,9 @@ func TestHandleConnection(t *testing.T) {
 			},
 		}
 
-		receiver := &Receiver{
+		receiver := &receiver{
 			conns: make(map[Conn]struct{}),
-			receive: func(got Stream) (TransferId, error) {
+			receive: func(got io.ReadWriteCloser) (transfer.TransferId, error) {
 				received <- got
 				return "transfer-123", nil
 			},
@@ -224,7 +226,7 @@ func TestReceiverListen(t *testing.T) {
 
 		expectedErr := errors.New("listen failed")
 
-		receiver := &Receiver{
+		receiver := &receiver{
 			listen: func(*tls.Config, *quic.Config) (Listener, error) {
 				return nil, expectedErr
 			},
@@ -251,7 +253,7 @@ func TestReceiverListen(t *testing.T) {
 			},
 		}
 
-		receiver := &Receiver{
+		receiver := &receiver{
 			listen: func(*tls.Config, *quic.Config) (Listener, error) {
 				return listener, nil
 			},
@@ -292,7 +294,7 @@ func TestReceiverListen(t *testing.T) {
 			},
 		}
 
-		receiver := &Receiver{
+		receiver := &receiver{
 			listen: func(*tls.Config, *quic.Config) (Listener, error) {
 				listenCalls++
 				return listener, nil
@@ -342,7 +344,7 @@ func TestReceiverListen(t *testing.T) {
 
 		listenCalls := 0
 
-		receiver := &Receiver{
+		receiver := &receiver{
 			listen: func(*tls.Config, *quic.Config) (Listener, error) {
 				listenCalls++
 
@@ -429,7 +431,7 @@ func TestReceiverReceive(t *testing.T) {
 			},
 		}
 
-		receiver := &Receiver{
+		receiver := &receiver{
 			conns: make(map[Conn]struct{}),
 		}
 
@@ -471,7 +473,7 @@ func TestReceiverCleanup(t *testing.T) {
 	t.Run("nil resources do not panic", func(t *testing.T) {
 		t.Parallel()
 
-		receiver := &Receiver{}
+		receiver := &receiver{}
 
 		assert.NotPanics(t, func() {
 			receiver.Cleanup()
@@ -493,7 +495,7 @@ func TestReceiverCleanup(t *testing.T) {
 			},
 		}
 
-		receiver := &Receiver{
+		receiver := &receiver{
 			listener:    listener,
 			isListening: true,
 		}
@@ -544,7 +546,7 @@ func TestReceiverCleanup(t *testing.T) {
 			return nil
 		}
 
-		receiver := &Receiver{
+		receiver := &receiver{
 			conns: map[Conn]struct{}{
 				conn1: {},
 				conn2: {},

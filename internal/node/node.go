@@ -14,7 +14,7 @@ const IP_ADDRESS = "127.0.0.1"
 
 type P2PNode struct {
 	transport       *quic.Transport
-	receiver        *transfer.Receiver
+	receiver        *receiver
 	sender          *sender
 	transferManager *transfer.Manager
 	addr            net.Addr
@@ -62,7 +62,7 @@ func newP2PNode(
 
 	transport := &quic.Transport{Conn: udpConn}
 	transferManager := transfer.NewManager(addr, openReader)
-	receiver := transfer.NewReceiver(transport, transferManager.Receive)
+	receiver := newReceiver(transport, transferManager.Receive)
 	sender := newSender(transport, addr, transferManager.Send)
 
 	return &P2PNode{

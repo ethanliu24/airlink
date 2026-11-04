@@ -30,6 +30,8 @@ type Listener interface {
 
 type dialFunc func(context.Context, net.Addr, *tls.Config, *quic.Config) (Conn, error)
 
+type listenFunc func(*tls.Config, *quic.Config) (Listener, error)
+
 type sendFunc func(stream io.ReadWriteCloser, filename string) (transfer.TransferId, error)
 
-type listenFunc func(*tls.Config, *quic.Config) (Listener, error)
+type receiveFunc func(stream io.ReadWriteCloser) (transfer.TransferId, error)

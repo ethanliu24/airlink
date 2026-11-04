@@ -42,7 +42,7 @@ func (m *Manager) Send(stream io.ReadWriteCloser, filename string) (TransferId, 
 	return id, nil
 }
 
-func (m *Manager) Receive(stream Stream) (TransferId, error) {
+func (m *Manager) Receive(stream io.ReadWriteCloser) (TransferId, error) {
 	transfer := newTransferReceive(stream)
 	id, err := m.register(transfer)
 

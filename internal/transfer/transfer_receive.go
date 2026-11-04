@@ -23,6 +23,7 @@ const (
 
 const (
 	defaultDestinationDir = "../../tmp"
+	receiveBufferSizeBytes = 1024 * 64
 )
 
 type transferReceive struct {
@@ -48,7 +49,7 @@ func (s *receiveResult) isTransferResult() {}
 // Assumes transferReceive is properly initialized
 func (r *transferReceive) run() TransferResult {
 	defer r.stream.Close()
-	
+
 	var receiveErr error
 
 	if r.consumed {
@@ -203,7 +204,7 @@ func (r *transferReceive) receiveData() (int, error) {
 	}
 
 	totalBytesRead := 0
-	buf := make([]byte, RECEIVER_BUFFER_SIZE_BYTES)
+	buf := make([]byte, receiveBufferSizeBytes)
 
 	for {
 		n, err := r.stream.Read(buf)
