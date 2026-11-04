@@ -466,3 +466,16 @@ func TestManagerReceive(t *testing.T) {
 		manager.mu.Unlock()
 	})
 }
+
+func TestNewManager(t *testing.T) {
+	mockAddr := testAddr()
+	mgr := NewManager(mockAddr, newMockReader)
+
+	require.NotNil(t, mgr)
+	assert.NotNil(t, mgr.transfers)
+	assert.Empty(t, mgr.transfers)
+	assert.Equal(t, mockAddr, mgr.addr)
+	assert.NotNil(t, mgr.openReader)
+	assert.NotNil(t, mgr.generateID)
+}
+

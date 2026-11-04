@@ -1,11 +1,10 @@
 package transfer
 
 import (
-	"airlink/internal/transfer/models"
-	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,137 +15,74 @@ import (
 
 const receiverTestTimeout = 2 * time.Second
 
-func newIncomingTransferStream(
-	t *testing.T,
-	request *models.TransferRequest,
-	fileData []byte,
-) (*mockStream, *bytes.Buffer, <-chan struct{}) {
-	t.Helper()
-
-	var incoming bytes.Buffer
-	require.NoError(t, writeMessage(&incoming, request))
-
-	_, err := incoming.Write(fileData)
-	require.NoError(t, err)
-
-	var outgoing bytes.Buffer
-	closed := make(chan struct{})
-
-	stream := &mockStream{
-		readFunc:  incoming.Read,
-		writeFunc: outgoing.Write,
-		closeFunc: func() error {
-			close(closed)
-			return nil
-		},
-	}
-
-	return stream, &outgoing, closed
-}
-
 func TestNewReceiver(t *testing.T) {
 	t.Parallel()
 
-	t.Run("success initialization", func(t *testing.T) {
-		t.Parallel()
+	transport := &quic.Transport{}
 
-		transport := &quic.Transport{}
+	receive := func(Stream) (TransferId, error) {
+		return "transfer-123", nil
+	}
 
-		receiver := NewReceiver(transport)
+	receiver := NewReceiver(transport, receive)
 
-		require.NotNil(t, receiver)
-		require.NotNil(t, receiver.listen)
-		assert.Nil(t, receiver.listener)
-	})
+	require.NotNil(t, receiver)
+	require.NotNil(t, receiver.listen)
+	require.NotNil(t, receiver.receive)
+	require.NotNil(t, receiver.conns)
+	assert.Nil(t, receiver.listener)
+	assert.False(t, receiver.isListening)
+	assert.Empty(t, receiver.conns)
 }
 
 func TestHandleStream(t *testing.T) {
 	t.Parallel()
 
-	t.Run("processes request and closes stream", func(t *testing.T) {
+	t.Run("delegates stream to manager", func(t *testing.T) {
 		t.Parallel()
 
-		request := &models.TransferRequest{
-			Filename:  "hello.txt",
-			Extension: ".txt",
-			FileSize:  5,
-			Mime:      "text/plain",
-			SenderIp:  "192.0.2.10",
+		stream := &mockStream{}
+
+		received := make(chan Stream, 1)
+
+		receiver := &Receiver{
+			receive: func(got Stream) (TransferId, error) {
+				received <- got
+				return "transfer-123", nil
+			},
 		}
 
-		stream, outgoing, closed := newIncomingTransferStream(
-			t,
-			request,
-			[]byte("hello"),
-		)
-
-		handleStream(stream)
+		receiver.handleStream(stream)
 
 		select {
-		case <-closed:
-		default:
-			t.Fatal("stream was not closed")
-		}
-
-		response := &models.TransferResponse{}
-		err := readMessage(bytes.NewReader(outgoing.Bytes()), response)
-
-		require.NoError(t, err)
-		assert.True(t, response.GetAccepted())
-		assert.Empty(t, response.GetRejectReason())
-	})
-
-	t.Run("closes stream when request read fails", func(t *testing.T) {
-		t.Parallel()
-
-		expectedErr := errors.New("stream read failed")
-		closed := make(chan struct{})
-
-		stream := &mockStream{
-			readFunc: func([]byte) (int, error) {
-				return 0, expectedErr
-			},
-			writeFunc: func([]byte) (int, error) {
-				return 0, errors.New("unexpected write")
-			},
-			closeFunc: func() error {
-				close(closed)
-				return nil
-			},
-		}
-
-		handleStream(stream)
-
-		select {
-		case <-closed:
-		default:
-			t.Fatal("stream was not closed after read failure")
+		case got := <-received:
+			assert.Same(t, stream, got)
+		case <-time.After(receiverTestTimeout):
+			t.Fatal("receive callback was not called")
 		}
 	})
 
-	t.Run("closes stream when request protobuf is malformed", func(t *testing.T) {
+	t.Run("delegates stream even when manager returns error", func(t *testing.T) {
 		t.Parallel()
 
-		// A length-prefixed protobuf payload containing invalid wire data.
-		incoming := bytes.NewReader([]byte{0, 0, 0, 1, 0xff})
-		closed := make(chan struct{})
+		expectedErr := errors.New("manager receive failed")
+		stream := &mockStream{}
 
-		stream := &mockStream{
-			readFunc:  incoming.Read,
-			writeFunc: func([]byte) (int, error) { return 0, errors.New("unexpected write") },
-			closeFunc: func() error {
-				close(closed)
-				return nil
+		called := false
+
+		receiver := &Receiver{
+			receive: func(got Stream) (TransferId, error) {
+				assert.Same(t, stream, got)
+				called = true
+				return "", expectedErr
 			},
 		}
 
-		handleStream(stream)
+		// handleStream delegates the stream. The manager owns
+		// handling errors and stream cleanup.
+		receiver.handleStream(stream)
 
-		select {
-		case <-closed:
-		default:
-			t.Fatal("stream was not closed after malformed request")
-		}
+		assert.True(t, called)
 	})
 }
 
@@ -156,11 +92,9 @@ func TestHandleConnection(t *testing.T) {
 	t.Run("removes connection after stream accept error", func(t *testing.T) {
 		t.Parallel()
 
-		expectedErr := errors.New("connection closed")
-
 		conn := &mockConn{
 			acceptStreamFunc: func(context.Context) (Stream, error) {
-				return nil, expectedErr
+				return nil, errors.New("connection closed")
 			},
 			closeWithErrFunc: func(
 				quic.ApplicationErrorCode,
@@ -178,13 +112,17 @@ func TestHandleConnection(t *testing.T) {
 
 		receiver.handleConnection(conn)
 
-		assert.NotContains(t, receiver.conns, conn)
+		receiver.mu.Lock()
+		_, exists := receiver.conns[conn]
+		receiver.mu.Unlock()
+
+		assert.False(t, exists)
 	})
 
 	t.Run("closes connection normally", func(t *testing.T) {
 		t.Parallel()
 
-		closeCalled := false
+		closeCalled := make(chan struct{})
 
 		conn := &mockConn{
 			acceptStreamFunc: func(context.Context) (Stream, error) {
@@ -194,11 +132,10 @@ func TestHandleConnection(t *testing.T) {
 				code quic.ApplicationErrorCode,
 				msg string,
 			) error {
-				closeCalled = true
-
 				assert.Equal(t, quic.ApplicationErrorCode(0), code)
 				assert.Equal(t, "receiver connection closed normally", msg)
 
+				close(closeCalled)
 				return nil
 			},
 		}
@@ -211,24 +148,24 @@ func TestHandleConnection(t *testing.T) {
 
 		receiver.handleConnection(conn)
 
-		assert.True(t, closeCalled)
-		assert.NotContains(t, receiver.conns, conn)
-	})
-
-	t.Run("handles accepted stream", func(t *testing.T) {
-		t.Parallel()
-
-		request := &models.TransferRequest{
-			Filename: "hello.txt",
-			FileSize: 5,
-			Mime:     "text/plain",
+		select {
+		case <-closeCalled:
+		case <-time.After(receiverTestTimeout):
+			t.Fatal("connection was not closed")
 		}
 
-		stream, outgoing, streamClosed := newIncomingTransferStream(
-			t,
-			request,
-			[]byte("hello"),
-		)
+		receiver.mu.Lock()
+		_, exists := receiver.conns[conn]
+		receiver.mu.Unlock()
+
+		assert.False(t, exists)
+	})
+
+	t.Run("delegates accepted streams", func(t *testing.T) {
+		t.Parallel()
+
+		stream := &mockStream{}
+		received := make(chan Stream, 1)
 
 		acceptCalls := 0
 
@@ -251,27 +188,31 @@ func TestHandleConnection(t *testing.T) {
 		}
 
 		receiver := &Receiver{
-			conns: map[Conn]struct{}{
-				conn: {},
+			conns: make(map[Conn]struct{}),
+			receive: func(got Stream) (TransferId, error) {
+				received <- got
+				return "transfer-123", nil
 			},
 		}
+
+		receiver.conns[conn] = struct{}{}
 
 		receiver.handleConnection(conn)
 
 		select {
-		case <-streamClosed:
+		case got := <-received:
+			assert.Same(t, stream, got)
 		case <-time.After(receiverTestTimeout):
-			t.Fatal("timed out waiting for accepted stream to finish")
+			t.Fatal("accepted stream was not delegated")
 		}
 
 		assert.Equal(t, 2, acceptCalls)
-		assert.NotContains(t, receiver.conns, conn)
 
-		response := &models.TransferResponse{}
-		err := readMessage(bytes.NewReader(outgoing.Bytes()), response)
+		receiver.mu.Lock()
+		_, exists := receiver.conns[conn]
+		receiver.mu.Unlock()
 
-		require.NoError(t, err)
-		assert.True(t, response.GetAccepted())
+		assert.False(t, exists)
 	})
 }
 
@@ -319,7 +260,14 @@ func TestReceiverListen(t *testing.T) {
 		err := receiver.Listen(&tls.Config{}, &quic.Config{})
 
 		require.NoError(t, err)
-		assert.Same(t, listener, receiver.listener)
+
+		receiver.mu.Lock()
+		storedListener := receiver.listener
+		isListening := receiver.isListening
+		receiver.mu.Unlock()
+
+		assert.Same(t, listener, storedListener)
+		assert.True(t, isListening)
 
 		select {
 		case <-acceptCalled:
@@ -332,6 +280,7 @@ func TestReceiverListen(t *testing.T) {
 		t.Parallel()
 
 		acceptCalled := make(chan struct{}, 1)
+		listenCalls := 0
 
 		listener := &mockListener{
 			acceptFunc: func(context.Context) (Conn, error) {
@@ -345,19 +294,18 @@ func TestReceiverListen(t *testing.T) {
 
 		receiver := &Receiver{
 			listen: func(*tls.Config, *quic.Config) (Listener, error) {
+				listenCalls++
 				return listener, nil
 			},
 		}
 
-		assert.False(t, receiver.isListening)
-
 		err := receiver.Listen(&tls.Config{}, &quic.Config{})
 		require.NoError(t, err)
-		assert.True(t, receiver.isListening)
 
 		err = receiver.Listen(&tls.Config{}, &quic.Config{})
-		require.Error(t, err)
-		assert.True(t, receiver.isListening)
+
+		require.ErrorIs(t, err, ReceiverAlreadyListeningError)
+		assert.Equal(t, 1, listenCalls)
 
 		select {
 		case <-acceptCalled:
@@ -397,15 +345,16 @@ func TestReceiverListen(t *testing.T) {
 		receiver := &Receiver{
 			listen: func(*tls.Config, *quic.Config) (Listener, error) {
 				listenCalls++
+
 				if listenCalls == 1 {
 					return firstListener, nil
 				}
+
 				return secondListener, nil
 			},
 		}
 
 		require.NoError(t, receiver.Listen(&tls.Config{}, &quic.Config{}))
-		assert.True(t, receiver.isListening)
 
 		select {
 		case <-firstAcceptCalled:
@@ -414,11 +363,20 @@ func TestReceiverListen(t *testing.T) {
 		}
 
 		receiver.Cleanup()
-		assert.False(t, receiver.isListening)
+
+		receiver.mu.Lock()
+		isListening := receiver.isListening
+		receiver.mu.Unlock()
+
+		assert.False(t, isListening)
 
 		require.NoError(t, receiver.Listen(&tls.Config{}, &quic.Config{}))
-		assert.True(t, receiver.isListening)
-		assert.Same(t, secondListener, receiver.listener)
+
+		receiver.mu.Lock()
+		storedListener := receiver.listener
+		receiver.mu.Unlock()
+
+		assert.Same(t, secondListener, storedListener)
 
 		select {
 		case <-secondAcceptCalled:
@@ -428,7 +386,7 @@ func TestReceiverListen(t *testing.T) {
 	})
 }
 
-func TestReceiverRecieve(t *testing.T) {
+func TestReceiverReceive(t *testing.T) {
 	t.Parallel()
 
 	t.Run("registers accepted connection and handles it", func(t *testing.T) {
@@ -437,6 +395,8 @@ func TestReceiverRecieve(t *testing.T) {
 		handlerStarted := make(chan struct{})
 		releaseHandler := make(chan struct{})
 		connectionClosed := make(chan struct{})
+
+		var closeOnce sync.Once
 
 		conn := &mockConn{
 			acceptStreamFunc: func(context.Context) (Stream, error) {
@@ -448,7 +408,9 @@ func TestReceiverRecieve(t *testing.T) {
 				quic.ApplicationErrorCode,
 				string,
 			) error {
-				close(connectionClosed)
+				closeOnce.Do(func() {
+					close(connectionClosed)
+				})
 				return nil
 			},
 		}
@@ -539,6 +501,62 @@ func TestReceiverCleanup(t *testing.T) {
 		receiver.Cleanup()
 
 		assert.True(t, closed)
+		assert.Nil(t, receiver.listener)
 		assert.False(t, receiver.isListening)
+	})
+
+	t.Run("closes active connections", func(t *testing.T) {
+		t.Parallel()
+
+		var (
+			mu                sync.Mutex
+			closedConnections []Conn
+		)
+
+		conn1 := &mockConn{}
+		conn2 := &mockConn{}
+
+		conn1.closeWithErrFunc = func(
+			code quic.ApplicationErrorCode,
+			msg string,
+		) error {
+			assert.Equal(t, quic.ApplicationErrorCode(1), code)
+			assert.Equal(t, "receiver tearing down", msg)
+
+			mu.Lock()
+			closedConnections = append(closedConnections, conn1)
+			mu.Unlock()
+
+			return nil
+		}
+
+		conn2.closeWithErrFunc = func(
+			code quic.ApplicationErrorCode,
+			msg string,
+		) error {
+			assert.Equal(t, quic.ApplicationErrorCode(1), code)
+			assert.Equal(t, "receiver tearing down", msg)
+
+			mu.Lock()
+			closedConnections = append(closedConnections, conn2)
+			mu.Unlock()
+
+			return nil
+		}
+
+		receiver := &Receiver{
+			conns: map[Conn]struct{}{
+				conn1: {},
+				conn2: {},
+			},
+		}
+
+		receiver.Cleanup()
+
+		mu.Lock()
+		assert.ElementsMatch(t, []Conn{conn1, conn2}, closedConnections)
+		mu.Unlock()
+
+		assert.Empty(t, receiver.conns)
 	})
 }

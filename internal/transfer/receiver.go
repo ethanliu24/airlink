@@ -19,22 +19,15 @@ type Receiver struct {
 	listen      ListenFunc
 	listener    Listener
 	isListening bool
+	receive     receiveFunc
 	conns       map[Conn]struct{}
 	mu          sync.Mutex
 }
 
-func handleStream(stream Stream) {
-	receive := newTransferReceive(stream)
-	receiveRes := receive.run()
-	result, ok := receiveRes.(*receiveResult)
+type receiveFunc func(stream Stream) (TransferId, error)
 
-	if !ok {
-		slog.Error("handleStream did not get *receiveResult")
-	}
-
-	if result.Err != nil {
-		slog.Error("transfer failed", "err", result.Err)
-	}
+func (r *Receiver) handleStream(stream Stream) {
+	r.receive(stream)
 }
 
 func (r *Receiver) handleConnection(conn Conn) {
@@ -54,7 +47,7 @@ func (r *Receiver) handleConnection(conn Conn) {
 			break
 		}
 
-		go handleStream(stream)
+		go r.handleStream(stream)
 	}
 }
 
@@ -85,6 +78,9 @@ func (r *Receiver) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error 
 
 	listener, err := r.listen(tlsConfig, quicConfig)
 	if err != nil {
+		r.mu.Lock()
+		r.isListening = false
+		r.mu.Unlock()
 		return err
 	}
 
@@ -114,7 +110,7 @@ func (r *Receiver) Cleanup() {
 	r.isListening = false
 }
 
-func NewReceiver(transport *quic.Transport) *Receiver {
+func NewReceiver(transport *quic.Transport, receive receiveFunc) *Receiver {
 	return &Receiver{
 		listen: func(tlsConfig *tls.Config, quicConfig *quic.Config) (Listener, error) {
 			listener, err := transport.Listen(tlsConfig, quicConfig)
@@ -128,6 +124,7 @@ func NewReceiver(transport *quic.Transport) *Receiver {
 		},
 		listener:    nil,
 		isListening: false,
+		receive:     receive,
 		conns:       make(map[Conn]struct{}),
 	}
 }

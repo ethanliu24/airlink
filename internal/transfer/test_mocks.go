@@ -21,9 +21,18 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+const testIP = "127.0.0.1"
+
 func toUDPAddress(ip string, port int) (*net.UDPAddr, error) {
 	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
 	return net.ResolveUDPAddr("udp", addr)
+}
+
+func testAddr() net.Addr {
+	return &net.UDPAddr{
+		IP:   net.ParseIP(testIP),
+		Port: 54321,
+	}
 }
 
 // unsecure config

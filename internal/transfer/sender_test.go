@@ -2,13 +2,9 @@
 package transfer
 
 import (
-	"airlink/internal/file"
-	"airlink/internal/transfer/models"
-	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
-	"io"
 	"net"
 	"sync"
 	"testing"
@@ -31,106 +27,50 @@ func senderTestAddr() net.Addr {
 	}
 }
 
-func newSenderAcceptedResponseReader(t *testing.T) *bytes.Reader {
-	t.Helper()
-
-	var buf bytes.Buffer
-
-	err := writeMessage(&buf, &models.TransferResponse{
-		Accepted: true,
-	})
-	require.NoError(t, err)
-
-	return bytes.NewReader(buf.Bytes())
-}
-
-func waitForSenderStreamClose(t *testing.T, done <-chan struct{}) {
-	t.Helper()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for transfer stream to close")
-	}
-}
-
-// newSenderTestStream creates a stream mock that safely tracks
-// how many times Close() is called.
-//
-// The done channel is closed only once, so duplicate Close calls
-// don't panic and can instead be detected with closeCount().
-func newSenderTestStream(
-	readFunc func([]byte) (int, error),
-	writeFunc func([]byte) (int, error),
-) (*mockStream, <-chan struct{}, func() int) {
-	done := make(chan struct{})
-
-	var (
-		closeOnce  sync.Once
-		closeMu    sync.Mutex
-		closeCount int
-	)
-
-	stream := &mockStream{
-		readFunc:  readFunc,
-		writeFunc: writeFunc,
-		closeFunc: func() error {
-			closeMu.Lock()
-			closeCount++
-			closeMu.Unlock()
-
-			closeOnce.Do(func() {
-				close(done)
-			})
-
-			return nil
-		},
-	}
-
-	getCloseCount := func() int {
-		closeMu.Lock()
-		defer closeMu.Unlock()
-
-		return closeCount
-	}
-
-	return stream, done, getCloseCount
-}
-
-func assertSenderStreamClosedOnce(t *testing.T, closeCount func() int) {
-	t.Helper()
-
-	assert.Equal(t, 1, closeCount(), "stream should be closed exactly once")
-}
-
 func TestNewSender(t *testing.T) {
 	t.Parallel()
 
 	transport := &quic.Transport{}
 
-	sender := NewSender(transport, newMockReader, senderTestAddr())
+	send := func(Stream, string) (TransferId, error) {
+		return "transfer-123", nil
+	}
+
+	sender := NewSender(
+		transport,
+		newMockReader,
+		senderTestAddr(),
+		send,
+	)
 
 	require.NotNil(t, sender)
 	require.NotNil(t, sender.dial)
 	require.NotNil(t, sender.conns)
+	require.NotNil(t, sender.send)
+
 	assert.Empty(t, sender.conns)
-	assert.Equal(t, senderTestAddr(), sender.addr)
 }
 
 func TestSend(t *testing.T) {
 	t.Parallel()
 
 	t.Run("dial error", func(t *testing.T) {
+		t.Parallel()
+
 		addr := &net.UDPAddr{
 			IP:   net.ParseIP(SENDER_TEST_IP),
 			Port: 12345,
 		}
 
+		var sendCalled bool
+
 		sender := &Sender{
 			dial:       mockDialErr,
 			conns:      make(map[string]Conn),
-			openReader: newMockReader,
-			addr:       senderTestAddr(),
+			send: func(Stream, string) (TransferId, error) {
+				sendCalled = true
+				return "", nil
+			},
 		}
 
 		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
@@ -138,27 +78,36 @@ func TestSend(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, "mock dial connection failed", err.Error())
 		assert.Empty(t, sender.conns)
+		assert.False(t, sendCalled)
 	})
 
-	t.Run("successful dial and transfer", func(t *testing.T) {
+	t.Run("successful dial and transfer delegation", func(t *testing.T) {
+		t.Parallel()
+
 		addr := &net.UDPAddr{
 			IP:   net.ParseIP(SENDER_TEST_IP),
 			Port: 12345,
 		}
 
-		responseReader := newSenderAcceptedResponseReader(t)
-		var written bytes.Buffer
-
-		stream, done, closeCount := newSenderTestStream(
-			responseReader.Read,
-			written.Write,
+		const (
+			filename   = "test.txt"
+			transferID = "transfer-123"
 		)
+
+		stream := &mockStream{}
 
 		expectedConn := &mockConn{
 			openStreamFunc: func() (Stream, error) {
 				return stream, nil
 			},
 		}
+
+		type sendCall struct {
+			stream   Stream
+			filename string
+		}
+
+		sendCalled := make(chan sendCall, 1)
 
 		sender := &Sender{
 			dial: func(
@@ -170,28 +119,41 @@ func TestSend(t *testing.T) {
 				return expectedConn, nil
 			},
 			conns: make(map[string]Conn),
-			openReader: func(_ string) (file.Reader, error) {
-				return newMockReader("hello world")
+			send: func(gotStream Stream, gotFilename string) (TransferId, error) {
+				sendCalled <- sendCall{
+					stream:   gotStream,
+					filename: gotFilename,
+				}
+
+				return TransferId(transferID), nil
 			},
-			addr: senderTestAddr(),
 		}
 
-		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
+		err := sender.Send(addr, filename, tlsConfig, quicConfig)
 		require.NoError(t, err)
 
-		waitForSenderStreamClose(t, done)
-		assertSenderStreamClosedOnce(t, closeCount)
+		// Wait for the asynchronous transfer delegation.
+		select {
+		case call := <-sendCalled:
+			assert.Same(t, stream, call.stream)
+			assert.Equal(t, filename, call.filename)
 
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for transfer delegation")
+		}
+
+		// Verify connection registration.
 		sender.mu.Lock()
 		conn, exists := sender.conns[addr.String()]
 		sender.mu.Unlock()
 
 		require.True(t, exists)
 		assert.Same(t, expectedConn, conn)
-		assert.NotZero(t, written.Len())
 	})
 
 	t.Run("open stream error", func(t *testing.T) {
+		t.Parallel()
+
 		addr := &net.UDPAddr{
 			IP:   net.ParseIP(SENDER_TEST_IP),
 			Port: 12345,
@@ -199,6 +161,9 @@ func TestSend(t *testing.T) {
 
 		expectedErr := errors.New("open stream failed")
 		openAttempted := make(chan struct{})
+
+		var sendCalled bool
+		var sendMu sync.Mutex
 
 		conn := &mockConn{
 			openStreamFunc: func() (Stream, error) {
@@ -216,9 +181,14 @@ func TestSend(t *testing.T) {
 			) (Conn, error) {
 				return conn, nil
 			},
-			conns:      make(map[string]Conn),
-			openReader: newMockReader,
-			addr:       senderTestAddr(),
+			conns: make(map[string]Conn),
+			send: func(Stream, string) (TransferId, error) {
+				sendMu.Lock()
+				sendCalled = true
+				sendMu.Unlock()
+
+				return "", nil
+			},
 		}
 
 		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
@@ -230,200 +200,68 @@ func TestSend(t *testing.T) {
 			t.Fatal("timed out waiting for OpenStream")
 		}
 
+		// Verify connection registration.
 		sender.mu.Lock()
 		storedConn, exists := sender.conns[addr.String()]
 		sender.mu.Unlock()
 
 		require.True(t, exists)
 		assert.Same(t, conn, storedConn)
+
+		sendMu.Lock()
+		assert.False(t, sendCalled)
+		sendMu.Unlock()
 	})
+}
 
-	t.Run("writes request and file data to stream", func(t *testing.T) {
-		addr := &net.UDPAddr{
-			IP:   net.ParseIP(SENDER_TEST_IP),
-			Port: 12345,
-		}
+func TestSendOverStream(t *testing.T) {
+	t.Parallel()
 
-		responseReader := newSenderAcceptedResponseReader(t)
-		var written bytes.Buffer
+	t.Run("delegates to manager", func(t *testing.T) {
+		t.Parallel()
 
-		stream, done, closeCount := newSenderTestStream(
-			responseReader.Read,
-			written.Write,
+		stream := &mockStream{}
+
+		const filename = "test.txt"
+
+		var (
+			called          bool
+			gotStream       Stream
+			gotFilename     string
 		)
 
-		conn := &mockConn{
-			openStreamFunc: func() (Stream, error) {
-				return stream, nil
-			},
-		}
-
 		sender := &Sender{
-			dial: func(
-				_ context.Context,
-				_ net.Addr,
-				_ *tls.Config,
-				_ *quic.Config,
-			) (Conn, error) {
-				return conn, nil
+			send: func(stream Stream, filename string) (TransferId, error) {
+				called = true
+				gotStream = stream
+				gotFilename = filename
+
+				return "transfer-123", nil
 			},
-			conns: make(map[string]Conn),
-			openReader: func(_ string) (file.Reader, error) {
-				return newMockReader("hello world")
-			},
-			addr: senderTestAddr(),
 		}
 
-		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
+		err := sender.sendOverStream(stream, filename)
+
 		require.NoError(t, err)
-
-		waitForSenderStreamClose(t, done)
-		assertSenderStreamClosedOnce(t, closeCount)
-
-		out := bytes.NewReader(written.Bytes())
-		request := &models.TransferRequest{}
-
-		require.NoError(t, readMessage(out, request))
-
-		assert.Equal(t, "report.txt", request.GetFilename())
-		assert.Equal(t, uint64(len("hello world")), request.GetFileSize())
-		assert.NotEmpty(t, request.GetMime())
-
-		fileData, err := io.ReadAll(out)
-		require.NoError(t, err)
-		assert.Equal(t, "hello world", string(fileData))
+		assert.True(t, called)
+		assert.Same(t, stream, gotStream)
+		assert.Equal(t, filename, gotFilename)
 	})
 
-	t.Run("reader open error closes stream exactly once", func(t *testing.T) {
-		addr := &net.UDPAddr{
-			IP:   net.ParseIP(SENDER_TEST_IP),
-			Port: 12345,
-		}
+	t.Run("returns manager error", func(t *testing.T) {
+		t.Parallel()
 
-		expectedErr := errors.New("reader failed")
-
-		stream, done, closeCount := newSenderTestStream(
-			nil,
-			func(data []byte) (int, error) {
-				return len(data), nil
-			},
-		)
-
-		conn := &mockConn{
-			openStreamFunc: func() (Stream, error) {
-				return stream, nil
-			},
-		}
+		expectedErr := errors.New("manager send failed")
 
 		sender := &Sender{
-			dial: func(
-				_ context.Context,
-				_ net.Addr,
-				_ *tls.Config,
-				_ *quic.Config,
-			) (Conn, error) {
-				return conn, nil
-			},
-			conns: make(map[string]Conn),
-			openReader: func(_ string) (file.Reader, error) {
-				return nil, expectedErr
-			},
-			addr: senderTestAddr(),
-		}
-
-		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
-		require.NoError(t, err)
-
-		waitForSenderStreamClose(t, done)
-		assertSenderStreamClosedOnce(t, closeCount)
-	})
-
-	t.Run("stream write error closes stream exactly once", func(t *testing.T) {
-		addr := &net.UDPAddr{
-			IP:   net.ParseIP(SENDER_TEST_IP),
-			Port: 12345,
-		}
-
-		expectedErr := errors.New("stream write failed")
-
-		stream, done, closeCount := newSenderTestStream(
-			nil,
-			func([]byte) (int, error) {
-				return 0, expectedErr
-			},
-		)
-
-		conn := &mockConn{
-			openStreamFunc: func() (Stream, error) {
-				return stream, nil
+			send: func(Stream, string) (TransferId, error) {
+				return "", expectedErr
 			},
 		}
 
-		sender := &Sender{
-			dial: func(
-				_ context.Context,
-				_ net.Addr,
-				_ *tls.Config,
-				_ *quic.Config,
-			) (Conn, error) {
-				return conn, nil
-			},
-			conns:      make(map[string]Conn),
-			openReader: newMockReader,
-			addr:       senderTestAddr(),
-		}
+		err := sender.sendOverStream(&mockStream{}, "test.txt")
 
-		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
-		require.NoError(t, err)
-
-		waitForSenderStreamClose(t, done)
-		assertSenderStreamClosedOnce(t, closeCount)
-	})
-
-	t.Run("response read error closes stream exactly once", func(t *testing.T) {
-		addr := &net.UDPAddr{
-			IP:   net.ParseIP(SENDER_TEST_IP),
-			Port: 12345,
-		}
-
-		expectedErr := errors.New("response read failed")
-
-		stream, done, closeCount := newSenderTestStream(
-			func([]byte) (int, error) {
-				return 0, expectedErr
-			},
-			func(data []byte) (int, error) {
-				return len(data), nil
-			},
-		)
-
-		conn := &mockConn{
-			openStreamFunc: func() (Stream, error) {
-				return stream, nil
-			},
-		}
-
-		sender := &Sender{
-			dial: func(
-				_ context.Context,
-				_ net.Addr,
-				_ *tls.Config,
-				_ *quic.Config,
-			) (Conn, error) {
-				return conn, nil
-			},
-			conns: make(map[string]Conn),
-			openReader: func(_ string) (file.Reader, error) {
-				return newMockReader("hello world")
-			},
-			addr: senderTestAddr(),
-		}
-
-		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
-		require.NoError(t, err)
-
-		waitForSenderStreamClose(t, done)
-		assertSenderStreamClosedOnce(t, closeCount)
+		require.ErrorIs(t, err, expectedErr)
 	})
 }
 
