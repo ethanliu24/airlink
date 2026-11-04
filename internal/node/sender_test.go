@@ -1,10 +1,11 @@
-
-package transfer
+package node
 
 import (
+	"airlink/internal/transfer"
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -17,8 +18,8 @@ import (
 
 const SENDER_TEST_IP = "127.0.0.1"
 
-var tlsConfig *tls.Config = generateTLSConfig()
-var quicConfig *quic.Config = getQuicConfig()
+var tlsConfig *tls.Config = generateTestTLSConfig()
+var quicConfig *quic.Config = getTestQuicConfig()
 
 func senderTestAddr() net.Addr {
 	return &net.UDPAddr{
@@ -32,13 +33,12 @@ func TestNewSender(t *testing.T) {
 
 	transport := &quic.Transport{}
 
-	send := func(Stream, string) (TransferId, error) {
+	send := func(io.ReadWriteCloser, string) (transfer.TransferId, error) {
 		return "transfer-123", nil
 	}
 
-	sender := NewSender(
+	sender := newSender(
 		transport,
-		newMockReader,
 		senderTestAddr(),
 		send,
 	)
@@ -64,10 +64,10 @@ func TestSend(t *testing.T) {
 
 		var sendCalled bool
 
-		sender := &Sender{
+		sender := &sender{
 			dial:       mockDialErr,
 			conns:      make(map[string]Conn),
-			send: func(Stream, string) (TransferId, error) {
+			send: func(io.ReadWriteCloser, string) (transfer.TransferId, error) {
 				sendCalled = true
 				return "", nil
 			},
@@ -97,19 +97,19 @@ func TestSend(t *testing.T) {
 		stream := &mockStream{}
 
 		expectedConn := &mockConn{
-			openStreamFunc: func() (Stream, error) {
+			openStreamFunc: func() (io.ReadWriteCloser, error) {
 				return stream, nil
 			},
 		}
 
 		type sendCall struct {
-			stream   Stream
+			stream   io.ReadWriteCloser
 			filename string
 		}
 
 		sendCalled := make(chan sendCall, 1)
 
-		sender := &Sender{
+		sender := &sender{
 			dial: func(
 				_ context.Context,
 				_ net.Addr,
@@ -119,13 +119,13 @@ func TestSend(t *testing.T) {
 				return expectedConn, nil
 			},
 			conns: make(map[string]Conn),
-			send: func(gotStream Stream, gotFilename string) (TransferId, error) {
+			send: func(gotStream io.ReadWriteCloser, gotFilename string) (transfer.TransferId, error) {
 				sendCalled <- sendCall{
 					stream:   gotStream,
 					filename: gotFilename,
 				}
 
-				return TransferId(transferID), nil
+				return transfer.TransferId(transferID), nil
 			},
 		}
 
@@ -166,13 +166,13 @@ func TestSend(t *testing.T) {
 		var sendMu sync.Mutex
 
 		conn := &mockConn{
-			openStreamFunc: func() (Stream, error) {
+			openStreamFunc: func() (io.ReadWriteCloser, error) {
 				close(openAttempted)
 				return nil, expectedErr
 			},
 		}
 
-		sender := &Sender{
+		sender := &sender{
 			dial: func(
 				_ context.Context,
 				_ net.Addr,
@@ -182,7 +182,7 @@ func TestSend(t *testing.T) {
 				return conn, nil
 			},
 			conns: make(map[string]Conn),
-			send: func(Stream, string) (TransferId, error) {
+			send: func(io.ReadWriteCloser, string) (transfer.TransferId, error) {
 				sendMu.Lock()
 				sendCalled = true
 				sendMu.Unlock()
@@ -226,12 +226,12 @@ func TestSendOverStream(t *testing.T) {
 
 		var (
 			called          bool
-			gotStream       Stream
+			gotStream       io.ReadWriteCloser
 			gotFilename     string
 		)
 
-		sender := &Sender{
-			send: func(stream Stream, filename string) (TransferId, error) {
+		sender := &sender{
+			send: func(stream io.ReadWriteCloser, filename string) (transfer.TransferId, error) {
 				called = true
 				gotStream = stream
 				gotFilename = filename
@@ -253,8 +253,8 @@ func TestSendOverStream(t *testing.T) {
 
 		expectedErr := errors.New("manager send failed")
 
-		sender := &Sender{
-			send: func(Stream, string) (TransferId, error) {
+		sender := &sender{
+			send: func(io.ReadWriteCloser, string) (transfer.TransferId, error) {
 				return "", expectedErr
 			},
 		}
@@ -305,7 +305,7 @@ func TestCleanup(t *testing.T) {
 		},
 	}
 
-	sender := &Sender{
+	sender := &sender{
 		conns: map[string]Conn{
 			"127.0.0.1:12345": conn1,
 			"127.0.0.1:12346": conn2,
@@ -324,7 +324,7 @@ func TestCleanup(t *testing.T) {
 func TestCleanupEmpty(t *testing.T) {
 	t.Parallel()
 
-	sender := &Sender{
+	sender := &sender{
 		conns: make(map[string]Conn),
 	}
 

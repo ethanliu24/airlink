@@ -1,7 +1,8 @@
-package transfer
+package node
 
 import (
 	"context"
+	"io"
 
 	"github.com/quic-go/quic-go"
 )
@@ -11,7 +12,7 @@ type quicConn struct {
 	conn *quic.Conn
 }
 
-func (c *quicConn) AcceptStream(ctx context.Context) (Stream, error) {
+func (c *quicConn) AcceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
 	stream, err := c.conn.AcceptStream(ctx)
 	if err != nil {
 		return nil, err
@@ -20,7 +21,7 @@ func (c *quicConn) AcceptStream(ctx context.Context) (Stream, error) {
 	return &quicStream{stream: stream}, nil
 }
 
-func (c *quicConn) OpenStream() (Stream, error) {
+func (c *quicConn) OpenStream() (io.ReadWriteCloser, error) {
 	stream, err := c.conn.OpenStream()
 	if err != nil {
 		return nil, err

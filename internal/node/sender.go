@@ -1,10 +1,10 @@
-package transfer
+package node
 
 import (
-	"airlink/internal/file"
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -16,16 +16,14 @@ import (
 var MAX_HANDSHAKE_TIMEOUT_SECONDS = 3 * time.Second
 var FILE_READ_CHUNK_SIZE_BYTES = 1024 * 64
 
-type Sender struct {
-	dial  DialFunc
+type sender struct {
+	dial  dialFunc
 	mu    sync.Mutex
 	conns map[string]Conn
 	send  sendFunc
 }
 
-type sendFunc func(stream Stream, filename string) (TransferId, error)
-
-func (s *Sender) sendOverStream(stream Stream, filename string) error {
+func (s *sender) sendOverStream(stream io.ReadWriteCloser, filename string) error {
 	_, err := s.send(stream, filename)
 	if err != nil {
 		return err
@@ -34,7 +32,7 @@ func (s *Sender) sendOverStream(stream Stream, filename string) error {
 	return nil
 }
 
-func (s *Sender) sendFile(conn Conn, filename string) {
+func (s *sender) sendFile(conn Conn, filename string) {
 	stream, err := conn.OpenStream()
 	if err != nil {
 		if errors.Is(err, &quic.StreamLimitReachedError{}) {
@@ -53,7 +51,7 @@ func (s *Sender) sendFile(conn Conn, filename string) {
 	}()
 }
 
-func (s *Sender) Send(
+func (s *sender) Send(
 	receiverAddr *net.UDPAddr,
 	filename string,
 	tlsConfig *tls.Config,
@@ -78,7 +76,7 @@ func (s *Sender) Send(
 	return nil
 }
 
-func (s *Sender) Cleanup() {
+func (s *sender) Cleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -88,13 +86,8 @@ func (s *Sender) Cleanup() {
 	}
 }
 
-func NewSender(
-	transport *quic.Transport,
-	openReader file.OpenReaderFunc,
-	addr net.Addr,
-	send sendFunc,
-) *Sender {
-	return &Sender{
+func newSender(transport *quic.Transport, addr net.Addr, send sendFunc) *sender {
+	return &sender{
 		dial: func(ctx context.Context, addr net.Addr, tlsConf *tls.Config, conf *quic.Config) (Conn, error) {
 			conn, err := transport.Dial(ctx, addr, tlsConf, conf)
 			if err != nil {

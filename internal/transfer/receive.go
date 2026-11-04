@@ -22,14 +22,15 @@ const (
 )
 
 const (
-	defaultDestinationDir = "../../tmp"
+	defaultDestinationDir  = "../../tmp"
+	receiveBufferSizeBytes = 1024 * 64
 )
 
-type transferReceive struct {
+type receive struct {
 	state           receiveState
 	request         *models.TransferRequest
 	response        *models.TransferResponse
-	stream          Stream
+	stream          io.ReadWriteCloser
 	destinationPath string
 	consumed        bool
 }
@@ -43,16 +44,13 @@ type receiveResult struct {
 
 func (s *receiveResult) isTransferResult() {}
 
-// This should run synchronously
-// This function should only be called once per transferReceive
-// Assumes transferReceive is properly initialized
-func (r *transferReceive) run() TransferResult {
+func (r *receive) run() TransferResult {
 	defer r.stream.Close()
-	
+
 	var receiveErr error
 
 	if r.consumed {
-		receiveErr = fmt.Errorf("<run> already called on a transferReceive")
+		receiveErr = fmt.Errorf("<run> already called on a receive")
 		r.state = receiveError
 	}
 
@@ -118,17 +116,17 @@ outer:
 	}
 }
 
-func (r *transferReceive) ingestRequst() error {
+func (r *receive) ingestRequst() error {
 	if r.state != receiveIngestingRequest {
 		return fmt.Errorf(
-			"transferReceive state is not %s in ingestRequst, got: %s",
+			"receive state is not %s in ingestRequst, got: %s",
 			receiveIngestingRequest,
 			r.state,
 		)
 	}
 
 	if r.request == nil {
-		return fmt.Errorf("transferReceive request nil - not initialized properly")
+		return fmt.Errorf("receive request nil - not initialized properly")
 	}
 
 	err := readMessage(r.stream, r.request)
@@ -141,10 +139,10 @@ func (r *transferReceive) ingestRequst() error {
 
 // TODO always accept for now, figure out how to get data from user
 // TODO return detination too
-func (r *transferReceive) processResponse() (*models.TransferResponse, string, error) {
+func (r *receive) processResponse() (*models.TransferResponse, string, error) {
 	if r.state != receiveProcessingRequest {
 		return nil, "", fmt.Errorf(
-			"transferReceive state is not %s in processResponse, got: %s",
+			"receive state is not %s in processResponse, got: %s",
 			receiveProcessingRequest,
 			r.state,
 		)
@@ -162,7 +160,7 @@ func (r *transferReceive) processResponse() (*models.TransferResponse, string, e
 	}, destinationPath, nil
 }
 
-func (r *transferReceive) resolveDestination(filename string) (string, error) {
+func (r *receive) resolveDestination(filename string) (string, error) {
 	destinationDir, err := filepath.Abs(defaultDestinationDir)
 	if err != nil {
 		return "", err
@@ -176,10 +174,10 @@ func (r *transferReceive) resolveDestination(filename string) (string, error) {
 	return filepath.Join(destinationDir, filename), nil
 }
 
-func (r *transferReceive) sendResponse() error {
+func (r *receive) sendResponse() error {
 	if r.state != receiveRespond {
 		return fmt.Errorf(
-			"transferReceive state is not %s in sendResponse, got: %s",
+			"receive state is not %s in sendResponse, got: %s",
 			receiveRespond,
 			r.state,
 		)
@@ -193,17 +191,17 @@ func (r *transferReceive) sendResponse() error {
 	return nil
 }
 
-func (r *transferReceive) receiveData() (int, error) {
+func (r *receive) receiveData() (int, error) {
 	if r.state != receiveReceiving {
 		return 0, fmt.Errorf(
-			"transferReceive state is not %s in receiveData, got: %s",
+			"receive state is not %s in receiveData, got: %s",
 			receiveReceiving,
 			r.state,
 		)
 	}
 
 	totalBytesRead := 0
-	buf := make([]byte, RECEIVER_BUFFER_SIZE_BYTES)
+	buf := make([]byte, receiveBufferSizeBytes)
 
 	for {
 		n, err := r.stream.Read(buf)
@@ -224,11 +222,11 @@ func (r *transferReceive) receiveData() (int, error) {
 	return totalBytesRead, nil
 }
 
-func newTransferReceive(stream Stream) *transferReceive {
-	return &transferReceive{
-		state:   receiveInit,
-		request: &models.TransferRequest{},
-		stream:  stream,
-		consumed:   false,
+func newReceiveTransfer(stream io.ReadWriteCloser) *receive {
+	return &receive{
+		state:    receiveInit,
+		request:  &models.TransferRequest{},
+		stream:   stream,
+		consumed: false,
 	}
 }

@@ -1,22 +1,21 @@
-package transfer
+package node
 
 import (
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 
 	"github.com/quic-go/quic-go"
 )
 
-const RECEIVER_BUFFER_SIZE_BYTES = 1024 * 64
-
 var ReceiverAlreadyListeningError = errors.New("receiver is already listening")
 
-type Receiver struct {
-	listen      ListenFunc
+type receiver struct {
+	listen      listenFunc
 	listener    Listener
 	isListening bool
 	receive     receiveFunc
@@ -24,13 +23,11 @@ type Receiver struct {
 	mu          sync.Mutex
 }
 
-type receiveFunc func(stream Stream) (TransferId, error)
-
-func (r *Receiver) handleStream(stream Stream) {
+func (r *receiver) handleStream(stream io.ReadWriteCloser) {
 	r.receive(stream)
 }
 
-func (r *Receiver) handleConnection(conn Conn) {
+func (r *receiver) handleConnection(conn Conn) {
 	defer func() {
 		_ = conn.CloseWithError(0x0, "receiver connection closed normally")
 
@@ -51,7 +48,7 @@ func (r *Receiver) handleConnection(conn Conn) {
 	}
 }
 
-func (r *Receiver) recieve(listener Listener) {
+func (r *receiver) recieve(listener Listener) {
 	for {
 		conn, err := listener.Accept(context.Background())
 		if err != nil {
@@ -67,7 +64,7 @@ func (r *Receiver) recieve(listener Listener) {
 	}
 }
 
-func (r *Receiver) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error {
+func (r *receiver) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error {
 	r.mu.Lock()
 	if r.isListening {
 		r.mu.Unlock()
@@ -93,7 +90,7 @@ func (r *Receiver) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error 
 	return nil
 }
 
-func (r *Receiver) Cleanup() {
+func (r *receiver) Cleanup() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -110,8 +107,8 @@ func (r *Receiver) Cleanup() {
 	r.isListening = false
 }
 
-func NewReceiver(transport *quic.Transport, receive receiveFunc) *Receiver {
-	return &Receiver{
+func newReceiver(transport *quic.Transport, receive receiveFunc) *receiver {
+	return &receiver{
 		listen: func(tlsConfig *tls.Config, quicConfig *quic.Config) (Listener, error) {
 			listener, err := transport.Listen(tlsConfig, quicConfig)
 			if err != nil {
