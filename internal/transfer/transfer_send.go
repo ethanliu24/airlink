@@ -35,7 +35,7 @@ type transferSend struct {
 	request    *models.TransferRequest
 	response   *models.TransferResponse
 	reader     file.Reader
-	stream     Stream
+	stream     io.ReadWriteCloser
 	senderAddr net.Addr
 	consumed   bool
 }

@@ -97,13 +97,13 @@ func TestSend(t *testing.T) {
 		stream := &mockStream{}
 
 		expectedConn := &mockConn{
-			openStreamFunc: func() (Stream, error) {
+			openStreamFunc: func() (io.ReadWriteCloser, error) {
 				return stream, nil
 			},
 		}
 
 		type sendCall struct {
-			stream   Stream
+			stream   io.ReadWriteCloser
 			filename string
 		}
 
@@ -166,7 +166,7 @@ func TestSend(t *testing.T) {
 		var sendMu sync.Mutex
 
 		conn := &mockConn{
-			openStreamFunc: func() (Stream, error) {
+			openStreamFunc: func() (io.ReadWriteCloser, error) {
 				close(openAttempted)
 				return nil, expectedErr
 			},
@@ -226,7 +226,7 @@ func TestSendOverStream(t *testing.T) {
 
 		var (
 			called          bool
-			gotStream       Stream
+			gotStream       io.ReadWriteCloser
 			gotFilename     string
 		)
 

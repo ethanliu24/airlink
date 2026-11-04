@@ -45,7 +45,7 @@ func TestHandleStream(t *testing.T) {
 
 		stream := &mockStream{}
 
-		received := make(chan Stream, 1)
+		received := make(chan io.ReadWriteCloser, 1)
 
 		receiver := &receiver{
 			receive: func(got io.ReadWriteCloser) (transfer.TransferId, error) {
@@ -95,7 +95,7 @@ func TestHandleConnection(t *testing.T) {
 		t.Parallel()
 
 		conn := &mockConn{
-			acceptStreamFunc: func(context.Context) (Stream, error) {
+			acceptStreamFunc: func(context.Context) (io.ReadWriteCloser, error) {
 				return nil, errors.New("connection closed")
 			},
 			closeWithErrFunc: func(
@@ -127,7 +127,7 @@ func TestHandleConnection(t *testing.T) {
 		closeCalled := make(chan struct{})
 
 		conn := &mockConn{
-			acceptStreamFunc: func(context.Context) (Stream, error) {
+			acceptStreamFunc: func(context.Context) (io.ReadWriteCloser, error) {
 				return nil, errors.New("connection closed")
 			},
 			closeWithErrFunc: func(
@@ -167,12 +167,12 @@ func TestHandleConnection(t *testing.T) {
 		t.Parallel()
 
 		stream := &mockStream{}
-		received := make(chan Stream, 1)
+		received := make(chan io.ReadWriteCloser, 1)
 
 		acceptCalls := 0
 
 		conn := &mockConn{
-			acceptStreamFunc: func(context.Context) (Stream, error) {
+			acceptStreamFunc: func(context.Context) (io.ReadWriteCloser, error) {
 				acceptCalls++
 
 				if acceptCalls == 1 {
@@ -401,7 +401,7 @@ func TestReceiverReceive(t *testing.T) {
 		var closeOnce sync.Once
 
 		conn := &mockConn{
-			acceptStreamFunc: func(context.Context) (Stream, error) {
+			acceptStreamFunc: func(context.Context) (io.ReadWriteCloser, error) {
 				close(handlerStarted)
 				<-releaseHandler
 				return nil, errors.New("connection closed")

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 
@@ -22,7 +23,7 @@ type receiver struct {
 	mu          sync.Mutex
 }
 
-func (r *receiver) handleStream(stream Stream) {
+func (r *receiver) handleStream(stream io.ReadWriteCloser) {
 	r.receive(stream)
 }
 

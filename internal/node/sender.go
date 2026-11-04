@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -22,7 +23,7 @@ type sender struct {
 	send  sendFunc
 }
 
-func (s *sender) sendOverStream(stream Stream, filename string) error {
+func (s *sender) sendOverStream(stream io.ReadWriteCloser, filename string) error {
 	_, err := s.send(stream, filename)
 	if err != nil {
 		return err

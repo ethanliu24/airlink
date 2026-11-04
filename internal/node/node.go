@@ -4,6 +4,7 @@ import (
 	"airlink/internal/file"
 	"airlink/internal/transfer"
 	"crypto/tls"
+	"io"
 	"log/slog"
 	"net"
 
@@ -36,7 +37,7 @@ func (n *P2PNode) Cleanup() {
 	n.transport.Close()
 }
 
-func (n *P2PNode) sendToManager(stream Stream, filename string) (transfer.TransferId, error) {
+func (n *P2PNode) sendToManager(stream io.ReadWriteCloser, filename string) (transfer.TransferId, error) {
 	return n.transferManager.Send(stream, filename)
 }
 

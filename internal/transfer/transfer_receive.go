@@ -30,7 +30,7 @@ type transferReceive struct {
 	state           receiveState
 	request         *models.TransferRequest
 	response        *models.TransferResponse
-	stream          Stream
+	stream          io.ReadWriteCloser
 	destinationPath string
 	consumed        bool
 }
@@ -225,7 +225,7 @@ func (r *transferReceive) receiveData() (int, error) {
 	return totalBytesRead, nil
 }
 
-func newTransferReceive(stream Stream) *transferReceive {
+func newTransferReceive(stream io.ReadWriteCloser) *transferReceive {
 	return &transferReceive{
 		state:   receiveInit,
 		request: &models.TransferRequest{},

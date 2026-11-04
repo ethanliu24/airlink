@@ -10,16 +10,9 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-
-type Stream interface {
-	Read([]byte) (int, error)
-	Write([]byte) (int, error)
-	Close() error
-}
-
 type Conn interface {
-	AcceptStream(context.Context) (Stream, error)
-	OpenStream() (Stream, error)
+	AcceptStream(context.Context) (io.ReadWriteCloser, error)
+	OpenStream() (io.ReadWriteCloser, error)
 	CloseWithError(quic.ApplicationErrorCode, string) error
 }
 

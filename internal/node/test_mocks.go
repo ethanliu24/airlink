@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"net"
 	"time"
@@ -84,16 +85,16 @@ func (s *mockStream) Close() error {
 }
 
 type mockConn struct {
-	acceptStreamFunc func(context.Context) (Stream, error)
-	openStreamFunc   func() (Stream, error)
+	acceptStreamFunc func(context.Context) (io.ReadWriteCloser, error)
+	openStreamFunc   func() (io.ReadWriteCloser, error)
 	closeWithErrFunc func(quic.ApplicationErrorCode, string) error
 }
 
-func (c *mockConn) AcceptStream(ctx context.Context) (Stream, error) {
+func (c *mockConn) AcceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
 	return c.acceptStreamFunc(ctx)
 }
 
-func (c *mockConn) OpenStream() (Stream, error) {
+func (c *mockConn) OpenStream() (io.ReadWriteCloser, error) {
 	return c.openStreamFunc()
 }
 
