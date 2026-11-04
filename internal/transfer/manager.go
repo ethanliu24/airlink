@@ -10,8 +10,9 @@ import (
 const idGenRetryTimes = 3
 
 type Manager struct {
-	transfers  map[string]transfer
-	mu         sync.Mutex
+	transfers map[string]transfer
+	mu        sync.Mutex
+
 	addr       net.Addr
 	openReader file.OpenReaderFunc
 	generateID generateIdTransferFunc
@@ -75,4 +76,13 @@ func (m *Manager) register(t transfer) (TransferId, error) {
 	}
 
 	return "", fmt.Errorf("manager receive transfer id generation max retries reached - impossible!")
+}
+
+func NewManager(addr net.Addr, openReader file.OpenReaderFunc) *Manager {
+	return &Manager{
+		transfers:  make(map[string]transfer),
+		addr:       addr,
+		openReader: openReader,
+		generateID: generateTransferId,
+	}
 }

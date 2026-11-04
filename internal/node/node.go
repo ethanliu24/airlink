@@ -1,12 +1,11 @@
 package node
 
 import (
+	"airlink/internal/file"
+	"airlink/internal/transfer"
 	"crypto/tls"
 	"log/slog"
 	"net"
-
-	"airlink/internal/file"
-	"airlink/internal/transfer"
 
 	"github.com/quic-go/quic-go"
 )
@@ -14,12 +13,13 @@ import (
 const IP_ADDRESS = "127.0.0.1"
 
 type P2PNode struct {
-	transport  *quic.Transport
-	receiver   *transfer.Receiver
-	sender     *transfer.Sender
-	addr       net.Addr
-	tlsConfig  *tls.Config
-	quicConfig *quic.Config
+	transport       *quic.Transport
+	receiver        *transfer.Receiver
+	sender          *transfer.Sender
+	transferManager *transfer.Manager
+	addr            net.Addr
+	tlsConfig       *tls.Config
+	quicConfig      *quic.Config
 }
 
 func (n *P2PNode) Listen() error {
@@ -59,13 +59,15 @@ func newP2PNode(
 	transport := &quic.Transport{Conn: udpConn}
 	receiver := transfer.NewReceiver(transport)
 	sender := transfer.NewSender(transport, openReader, addr)
+	manager := transfer.NewManager(addr, openReader)
 
 	return &P2PNode{
-		transport:  transport,
-		receiver:   receiver,
-		sender:     sender,
-		addr:       addr,
-		tlsConfig:  tlsConfig,
-		quicConfig: quicConfig,
+		transport:       transport,
+		receiver:        receiver,
+		sender:          sender,
+		transferManager: manager,
+		addr:            addr,
+		tlsConfig:       tlsConfig,
+		quicConfig:      quicConfig,
 	}, nil
 }
