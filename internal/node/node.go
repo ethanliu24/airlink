@@ -58,7 +58,7 @@ func newP2PNode(
 
 	transport := &quic.Transport{Conn: udpConn}
 	manager := transfer.NewManager(addr, openReader)
-	receiver := transfer.NewReceiver(transport)
+	receiver := transfer.NewReceiver(transport, manager.Receive)
 	sender := transfer.NewSender(transport, openReader, addr, manager.Send)
 
 	return &P2PNode{
