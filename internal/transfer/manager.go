@@ -3,6 +3,7 @@ package transfer
 import (
 	"airlink/internal/file"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 )
@@ -18,7 +19,7 @@ type Manager struct {
 	generateID generateIdTransferFunc
 }
 
-func (m *Manager) Send(stream Stream, filename string) (TransferId, error) {
+func (m *Manager) Send(stream io.ReadWriteCloser, filename string) (TransferId, error) {
 	reader, err := m.openReader(filename)
 	if err != nil {
 		_ = stream.Close()

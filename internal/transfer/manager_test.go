@@ -188,7 +188,7 @@ func TestManagerSend(t *testing.T) {
 
 		manager := &Manager{
 			transfers: make(map[string]transfer),
-			addr:      senderTestAddr(),
+			addr:      testAddr(),
 			openReader: func(gotFilename string) (file.Reader, error) {
 				assert.Equal(t, filename, gotFilename)
 				return reader, nil
