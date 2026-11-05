@@ -8,8 +8,8 @@ func (b *bus) addEvent(event Event) {
 	b.queue <- event
 }
 
-func (b *bus) getEvent() Event {
-	return <-b.queue
+func (b *bus) Events() chan Event {
+	return b.queue
 }
 
 func (b *bus) cleanUp() {

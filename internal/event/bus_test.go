@@ -23,7 +23,7 @@ func TestBusLifecycle(t *testing.T) {
 			b.addEvent(mockEvent)
 		}()
 
-		receivedEvent := b.getEvent()
+		receivedEvent := <-b.Events()
 		require.NotNil(t, receivedEvent)
 		assert.Equal(t, mockEvent.Name(), receivedEvent.Name())
 		assert.Equal(t, mockEvent.Payload(), receivedEvent.Payload())
@@ -39,7 +39,7 @@ func TestBusLifecycle(t *testing.T) {
 		var received Event
 
 		go func() {
-			received = b.getEvent()
+			received = <-b.Events()
 			close(done)
 		}()
 
