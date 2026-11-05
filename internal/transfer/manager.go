@@ -68,6 +68,7 @@ func (m *Manager) register(t transfer) (TransferId, error) {
 		m.mu.Lock()
 		_, used := m.transfers[id]
 		if !used {
+			t.setId(id)
 			m.transfers[id] = t
 			m.mu.Unlock()
 			return id, nil

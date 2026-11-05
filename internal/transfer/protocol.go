@@ -27,6 +27,8 @@ type TransferResult interface {
 }
 
 type transfer interface {
+	getId() TransferId
+	setId(TransferId)
 	run() TransferResult
 }
 
