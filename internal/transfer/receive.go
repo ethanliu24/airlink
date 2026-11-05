@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 type receiveState string
@@ -27,6 +28,9 @@ const (
 )
 
 type receive struct {
+	id        TransferId
+	setIdOnce sync.Once
+
 	state           receiveState
 	request         *models.TransferRequest
 	response        *models.TransferResponse
@@ -43,6 +47,14 @@ type receiveResult struct {
 }
 
 func (s *receiveResult) isTransferResult() {}
+
+func (r *receive) getId() TransferId {
+	return r.id
+}
+
+func (r *receive) setId(id TransferId) {
+	r.setIdOnce.Do(func() { r.id = id })
+}
 
 func (r *receive) run() TransferResult {
 	defer r.stream.Close()

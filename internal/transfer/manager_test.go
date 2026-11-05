@@ -77,7 +77,7 @@ func TestManagerRegister(t *testing.T) {
         t.Run(tt.name, func(t *testing.T) {
             t.Parallel()
 
-            var transferUnderTest transfer
+            var transferUnderTest = &send{}
 
             existing := make(map[string]transfer)
             for _, id := range tt.existingIDs {
@@ -131,6 +131,28 @@ func TestManagerRegister(t *testing.T) {
             assert.Equal(t, transferUnderTest, registeredTransfer)
         })
     }
+
+	for _, transferUnderTest := range []transfer {
+		&send{},
+		&receive{},
+	}{
+		t.Run("sets transfer id after registration", func(t *testing.T) {
+			manager := &Manager{
+				transfers: make(map[string]transfer),
+				generateID: func () (TransferId, error) {
+					return "test", nil
+				},
+			}
+
+			id, err := manager.register(transferUnderTest)
+			transferId := transferUnderTest.getId()
+
+			require.NoError(t, err)
+			require.NotNil(t, transferId)
+			assert.Equal(t, id, "test")
+			assert.Equal(t, transferId, "test")
+		})
+	}
 }
 
 func TestManagerSend(t *testing.T) {

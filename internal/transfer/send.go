@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"sync"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -31,6 +32,9 @@ const (
 )
 
 type send struct {
+	id        TransferId
+	setIdOnce sync.Once
+
 	state      sendState
 	request    *models.TransferRequest
 	response   *models.TransferResponse
@@ -47,6 +51,14 @@ type sendResult struct {
 }
 
 func (s *sendResult) isTransferResult() {}
+
+func (s *send) getId() TransferId {
+	return s.id
+}
+
+func (s *send) setId(id TransferId) {
+	s.setIdOnce.Do(func () { s.id = id })
+}
 
 func (s *send) run() TransferResult {
 	defer s.reader.Close()
