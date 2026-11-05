@@ -14,7 +14,7 @@ func TestBusLifecycle(t *testing.T) {
 	t.Run("successfully adds and gets events sequentially using a goroutine", func(t *testing.T) {
 		t.Parallel()
 
-		b := NewBus()
+		b := newBus()
 		mockPayload := &testPayload{id: 99}
 		mockEvent, err := NewEvent("test.event", mockPayload)
 		require.NoError(t, err)
@@ -23,7 +23,7 @@ func TestBusLifecycle(t *testing.T) {
 			b.addEvent(mockEvent)
 		}()
 
-		receivedEvent := b.getEvent()
+		receivedEvent := <-b.Events()
 		require.NotNil(t, receivedEvent)
 		assert.Equal(t, mockEvent.Name(), receivedEvent.Name())
 		assert.Equal(t, mockEvent.Payload(), receivedEvent.Payload())
@@ -32,14 +32,14 @@ func TestBusLifecycle(t *testing.T) {
 	t.Run("successfully closes the queue on cleanUp", func(t *testing.T) {
 		t.Parallel()
 
-		b := NewBus()
+		b := newBus()
 		b.cleanUp()
 
 		done := make(chan struct{})
 		var received Event
 
 		go func() {
-			received = b.getEvent()
+			received = <-b.Events()
 			close(done)
 		}()
 
@@ -54,7 +54,7 @@ func TestBusLifecycle(t *testing.T) {
 	t.Run("panics when trying to add an event after cleanUp", func(t *testing.T) {
 		t.Parallel()
 
-		b := NewBus()
+		b := newBus()
 		b.cleanUp()
 
 		mockPayload := &testPayload{id: 100}
