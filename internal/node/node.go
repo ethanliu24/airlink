@@ -54,6 +54,10 @@ func (n *P2PNode) Cleanup() {
 	n.transport.Close()
 }
 
+func (n *P2PNode) SubmitTransferAcceptDecision(id transfer.TransferId, accepted bool) error {
+	return n.transferManager.SubmitTransferAcceptDecision(id, accepted)
+}
+
 func NewP2PNode(addr *net.UDPAddr) (*P2PNode, error) {
 	return newP2PNode(addr, net.ListenUDP, file.OpenReader)
 }

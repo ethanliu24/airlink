@@ -312,7 +312,7 @@ func TestReceiveRequestUserTransferAcceptance(t *testing.T) {
 		payload, ok := emitted.Payload().(*RequestTransferAcceptancePayload)
 		require.True(t, ok)
 
-		assert.Equal(t, id, payload.transferId)
+		assert.Equal(t, id, payload.TransferId)
 	})
 
 	t.Run("propagates event publishing error", func(t *testing.T) {
@@ -422,7 +422,7 @@ func TestReceiveProcessResponse(t *testing.T) {
 
 			payload, ok := gotEvent.Payload().(*RequestTransferAcceptancePayload)
 			require.True(t, ok)
-			assert.Equal(t, transfer.id, payload.transferId)
+			assert.Equal(t, transfer.id, payload.TransferId)
 
 			// Supply the user's decision.
 			transfer.userTransferAcceptanceDecision(tt.accepted)
@@ -716,7 +716,7 @@ func TestReceiveRun(t *testing.T) {
 
 		payload, ok := gotEvent.Payload().(*RequestTransferAcceptancePayload)
 		require.True(t, ok)
-		assert.Equal(t, transferID, payload.transferId)
+		assert.Equal(t, transferID, payload.TransferId)
 
 		// Approve the transfer.
 		transfer.userTransferAcceptanceDecision(true)

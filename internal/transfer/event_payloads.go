@@ -8,5 +8,5 @@ func eventName(name string) string {
 
 const RequestTransferAcceptanceEvtName = moduleEventPrefix + "." + "requestTransferAcceptance"
 type RequestTransferAcceptancePayload struct {
-	transferId TransferId
+	TransferId TransferId
 }

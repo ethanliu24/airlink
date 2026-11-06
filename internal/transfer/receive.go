@@ -164,7 +164,7 @@ func (r *receive) ingestRequst() error {
 }
 
 func (r *receive) requestUserTransferAcceptance(transferId TransferId) error {
-	payload := &RequestTransferAcceptancePayload{transferId: transferId}
+	payload := &RequestTransferAcceptancePayload{TransferId: transferId}
 	event, err := event.NewEvent(RequestTransferAcceptanceEvtName, payload)
 	if err != nil {
 		return err

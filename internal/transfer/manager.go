@@ -82,6 +82,26 @@ func (m *Manager) register(t transfer) (TransferId, error) {
 	return "", fmt.Errorf("manager receive transfer id generation max retries reached - impossible!")
 }
 
+func (m *Manager) GetTransfer(id TransferId) (transfer, bool) {
+	transfer, ok := m.transfers[id]
+	return transfer, ok
+}
+
+func (m *Manager) SubmitTransferAcceptDecision(id TransferId, accepted bool) error {
+	receiveTransfer, exist := m.GetTransfer(id)
+	if !exist {
+		return fmt.Errorf("SubmitTransferAcceptDecision receive transfer does not exist - id: %s", id)
+	}
+
+	transfer, ok := receiveTransfer.(*receive)
+	if !ok {
+		return fmt.Errorf("SubmitTransferAcceptDecision transfer is not a receive transfer - id: %s", id)
+	}
+
+	transfer.userTransferAcceptanceDecision(accepted)
+	return nil
+}
+
 func NewManager(addr net.Addr, openReader file.OpenReaderFunc, emitEvent event.EmitEventFunc) *Manager {
 	return &Manager{
 		transfers:  make(map[string]transfer),
