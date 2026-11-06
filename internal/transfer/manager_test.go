@@ -531,3 +531,109 @@ func TestGetTransfer(t *testing.T) {
 		require.Nil(t, nil, transfer)
 	})
 }
+
+func TestSubmitTransferAcceptDecision(t *testing.T) {
+	t.Parallel()
+
+	const id = TransferId("transfer-123")
+
+	t.Run("submits acceptance decision", func(t *testing.T) {
+		t.Parallel()
+
+		receiveTransfer := &receive{
+			acceptTransfer: make(chan bool, 1),
+		}
+
+		manager := &Manager{
+			transfers: map[string]transfer{
+				string(id): receiveTransfer,
+			},
+		}
+
+		err := manager.SubmitTransferAcceptDecision(id, true)
+
+		require.NoError(t, err)
+
+		accepted, ok := <-receiveTransfer.acceptTransfer
+
+		require.True(t, ok)
+		assert.True(t, accepted)
+
+		// Verify the channel was closed after the decision.
+		_, ok = <-receiveTransfer.acceptTransfer
+		assert.False(t, ok)
+	})
+
+	t.Run("submits rejection decision", func(t *testing.T) {
+		t.Parallel()
+
+		receiveTransfer := &receive{
+			acceptTransfer: make(chan bool, 1),
+		}
+
+		manager := &Manager{
+			transfers: map[string]transfer{
+				string(id): receiveTransfer,
+			},
+		}
+
+		err := manager.SubmitTransferAcceptDecision(id, false)
+
+		require.NoError(t, err)
+
+		accepted, ok := <-receiveTransfer.acceptTransfer
+
+		require.True(t, ok)
+		assert.False(t, accepted)
+	})
+
+	t.Run("transfer does not exist", func(t *testing.T) {
+		t.Parallel()
+
+		manager := &Manager{
+			transfers: make(map[string]transfer),
+		}
+
+		err := manager.SubmitTransferAcceptDecision(id, true)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "receive transfer does not exist")
+	})
+
+	t.Run("transfer is not a receive transfer", func(t *testing.T) {
+		t.Parallel()
+
+		manager := &Manager{
+			transfers: map[string]transfer{
+				string(id): &send{},
+			},
+		}
+
+		err := manager.SubmitTransferAcceptDecision(id, true)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "transfer is not a receive transfer")
+	})
+
+	t.Run("only first decision is submitted", func(t *testing.T) {
+		t.Parallel()
+
+		receiveTransfer := &receive{
+			acceptTransfer: make(chan bool, 1),
+		}
+
+		manager := &Manager{
+			transfers: map[string]transfer{
+				string(id): receiveTransfer,
+			},
+		}
+
+		require.NoError(t, manager.SubmitTransferAcceptDecision(id, false))
+		require.NoError(t, manager.SubmitTransferAcceptDecision(id, true))
+
+		accepted, ok := <-receiveTransfer.acceptTransfer
+
+		require.True(t, ok)
+		assert.False(t, accepted)
+	})
+}
