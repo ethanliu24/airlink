@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"runtime"
 	"strings"
@@ -43,7 +44,7 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 			payload := e.Payload().(*transfer.RequestTransferAcceptancePayload)
 			scanner := bufio.NewScanner(os.Stdin)
 
-			fmt.Print("Accept Transfer? [y/n]")
+			printToTerminal("Accept Transfer? [y/n] ")
 			if scanner.Scan() {
 				input := strings.TrimSpace(scanner.Text())
 
@@ -66,42 +67,7 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 	}
 }
 
-// Run the commands in two terminals:
-// go run cmd/test/main.go --sender=true
-// go run cmd/test/main.go --sender=false > tmp/listener.txt
-func main() {
-	isSender := flag.Bool("sender", false, "whether the node focuses on listening or sending")
-
-	flag.Parse()
-
-	senderPort, receiverPort := PORT_1, PORT_2
-	if !*isSender {
-		senderPort, receiverPort = PORT_2, PORT_1
-	}
-
-	if !*isSender {
-		senderPort, receiverPort = PORT_2, PORT_1
-	}
-
-	senderAddr, err := node.CreateUDPAddress(LOCAL_IP, senderPort)
-	if err != nil {
-		log.Fatalf("sender udp addr creation failed: %v\n", err)
-	}
-
-	receiverAddr, nil := node.CreateUDPAddress(LOCAL_IP, receiverPort)
-	if err != nil {
-		log.Fatalf("receiver udp addr creation failed: %v\n", err)
-	}
-
-	node, err := node.NewP2PNode(senderAddr)
-	node.RegisterEventHandler(eventHandler(node))
-	defer node.Cleanup()
-
-	err = node.Start()
-	if err != nil {
-		log.Fatalf("node listen failed: %v\n", err)
-	}
-
+func startSender(node *node.P2PNode, receiverPort int, receiverAddr *net.UDPAddr) {
 	for {
 		printToTerminal("Enter data to send to port %d: ", receiverPort)
 		reader := bufio.NewReader(os.Stdin)
@@ -112,7 +78,57 @@ func main() {
 		case "q", "quit", "exit":
 			os.Exit(0)
 		default:
-			node.SendFile(receiverAddr, userInput)
+			err := node.SendFile(receiverAddr, userInput)
+			if err != nil {
+				printToTerminal("%v", err)
+			}
 		}
+	}
+}
+
+func startReceiver() {
+	select {}
+}
+
+// Run the commands in two terminals:
+// go run cmd/test/main.go --sender=true
+// go run cmd/test/main.go --sender=false > tmp/listener.txt
+func main() {
+	isSender := flag.Bool("sender", false, "whether the node focuses on listening or sending")
+
+	flag.Parse()
+
+	addr1, err := node.CreateUDPAddress(LOCAL_IP, PORT_1)
+	if err != nil {
+		log.Fatalf("port 1 udp addr creation failed: %v\n", err)
+	}
+
+	addr2, err := node.CreateUDPAddress(LOCAL_IP, PORT_2)
+	if err != nil {
+		log.Fatalf("port 2 udp addr creation failed: %v\n", err)
+	}
+
+	listeningAddr := addr1
+	if !*isSender {
+		listeningAddr = addr2
+	}
+
+	node, err := node.NewP2PNode(listeningAddr)
+	if err != nil {
+		log.Fatalf("node creation failed: %v\n", err)
+	}
+
+	node.RegisterEventHandler(eventHandler(node))
+	defer node.Cleanup()
+
+	err = node.Start()
+	if err != nil {
+		log.Fatalf("node listen failed: %v\n", err)
+	}
+
+	if *isSender {
+		startSender(node, PORT_2, addr2)
+	} else {
+		startReceiver()
 	}
 }
