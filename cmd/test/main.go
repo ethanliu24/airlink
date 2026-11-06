@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -59,6 +60,23 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 					return err
 				}
 			}
+		case transfer.RequestDownloadDestinationEvtName:
+			payload := e.Payload().(*transfer.RequestDownloadDestinationPayload)
+			scanner := bufio.NewScanner(os.Stdin)
+
+			printToTerminal("Enter destination: ")
+			if scanner.Scan() {
+				input := strings.TrimSpace(scanner.Text())
+				destination, err := filepath.Abs(input)
+				if err != nil {
+					return err
+				}
+
+				err = node.SubmitDownloadDestination(payload.TransferId, destination)
+				if err != nil {
+					return err
+				}
+			}
 		default:
 			return fmt.Errorf("unrecognized event name for node: %s", e.Name())
 		}
@@ -93,6 +111,7 @@ func startReceiver() {
 // Run the commands in two terminals:
 // go run cmd/test/main.go --sender=true
 // go run cmd/test/main.go --sender=false > tmp/listener.txt
+// destination copy: tmp/destination.txt
 func main() {
 	isSender := flag.Bool("sender", false, "whether the node focuses on listening or sending")
 
