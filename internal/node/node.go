@@ -58,6 +58,10 @@ func (n *P2PNode) SubmitTransferAcceptDecision(id transfer.TransferId, accepted 
 	return n.transferManager.SubmitTransferAcceptDecision(id, accepted)
 }
 
+func (n *P2PNode) SubmitDownloadDestination(id transfer.TransferId, destination string) error {
+	return n.transferManager.SubmitDownloadDestination(id, destination)
+}
+
 func NewP2PNode(addr *net.UDPAddr) (*P2PNode, error) {
 	return newP2PNode(addr, net.ListenUDP, file.OpenReader)
 }

@@ -1,3 +1,4 @@
+
 package transfer
 
 import (
@@ -116,7 +117,10 @@ func waitForReceiveChannel(
 	}
 }
 
-func waitForReceiveResult(t *testing.T, done <-chan TransferResult) TransferResult {
+func waitForReceiveResult(
+	t *testing.T,
+	done <-chan TransferResult,
+) TransferResult {
 	t.Helper()
 
 	select {
@@ -128,7 +132,10 @@ func waitForReceiveResult(t *testing.T, done <-chan TransferResult) TransferResu
 	}
 }
 
-func waitForReceiveEvent(t *testing.T, events <-chan event.Event) event.Event {
+func waitForReceiveEvent(
+	t *testing.T,
+	events <-chan event.Event,
+) event.Event {
 	t.Helper()
 
 	select {
@@ -168,6 +175,9 @@ func TestNewReceiveTransfer(t *testing.T) {
 	assert.NotNil(t, transfer.request)
 	assert.Same(t, stream, transfer.stream)
 	assert.NotNil(t, transfer.acceptTransfer)
+	assert.Equal(t, 1, cap(transfer.acceptTransfer))
+	assert.NotNil(t, transfer.selectedDestination)
+	assert.Equal(t, 1, cap(transfer.selectedDestination))
 	assert.False(t, transfer.consumed)
 	assert.NotNil(t, transfer.emitEvent)
 }
@@ -334,34 +344,188 @@ func TestReceiveRequestUserTransferAcceptance(t *testing.T) {
 func TestReceiveUserTransferAcceptanceDecision(t *testing.T) {
 	t.Parallel()
 
-	transfer := newReceiveTestTransfer(nil)
+	t.Run("decision can be submitted before receiver waits", func(t *testing.T) {
+		t.Parallel()
 
-	decisionDone := make(chan struct{})
+		transfer := newReceiveTestTransfer(nil)
 
-	go func() {
-		transfer.userTransferAcceptanceDecision(true)
-		close(decisionDone)
-	}()
+		submitted := make(chan struct{})
 
-	// The channel is unbuffered, so the decision method blocks
-	// until the receiving side consumes the value.
-	select {
-	case accepted := <-transfer.acceptTransfer:
+		go func() {
+			transfer.userTransferAcceptanceDecision(true)
+			close(submitted)
+		}()
+
+		select {
+		case <-submitted:
+		case <-time.After(receiveStateTestTimeout):
+			t.Fatal("decision submission blocked")
+		}
+
+		accepted, ok := <-transfer.acceptTransfer
+
+		require.True(t, ok)
 		assert.True(t, accepted)
-
-	case <-time.After(receiveStateTestTimeout):
-		t.Fatal("timed out waiting for acceptance decision")
-	}
-
-	waitForReceiveChannel(t, decisionDone, "decision submission")
-
-	// A second decision should be ignored because of sync.Once.
-	assert.NotPanics(t, func() {
-		transfer.userTransferAcceptanceDecision(false)
 	})
 
-	_, ok := <-transfer.acceptTransfer
-	assert.False(t, ok, "acceptance channel should be closed")
+	t.Run("only first decision is accepted", func(t *testing.T) {
+		t.Parallel()
+
+		transfer := newReceiveTestTransfer(nil)
+
+		transfer.userTransferAcceptanceDecision(false)
+		transfer.userTransferAcceptanceDecision(true)
+
+		accepted, ok := <-transfer.acceptTransfer
+
+		require.True(t, ok)
+		assert.False(t, accepted)
+
+		_, ok = <-transfer.acceptTransfer
+		assert.False(t, ok, "acceptance channel should be closed")
+	})
+}
+
+func TestReceiveRequestDownloadDestination(t *testing.T) {
+	t.Parallel()
+
+	t.Run("emits destination request event", func(t *testing.T) {
+		t.Parallel()
+
+		var emitted event.Event
+
+		transfer := newReceiveTestTransfer(nil)
+		transfer.emitEvent = func(got event.Event) error {
+			emitted = got
+			return nil
+		}
+
+		id := TransferId("transfer-123")
+
+		err := transfer.requestDownloadDestination(id)
+
+		require.NoError(t, err)
+		require.NotNil(t, emitted)
+
+		assert.Equal(t, RequestDownloadDestinationEvtName, emitted.Name())
+
+		payload, ok := emitted.Payload().(*RequestDownloadDestinationPayload)
+		require.True(t, ok)
+
+		assert.Equal(t, id, payload.TransferId)
+	})
+
+	t.Run("propagates event publishing error", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("destination event publishing failed")
+
+		transfer := newReceiveTestTransfer(nil)
+		transfer.emitEvent = func(event.Event) error {
+			return expectedErr
+		}
+
+		err := transfer.requestDownloadDestination("transfer-123")
+
+		require.ErrorIs(t, err, expectedErr)
+	})
+}
+
+func TestReceiveUserDownloadDestinationDecision(t *testing.T) {
+	t.Parallel()
+
+	t.Run("rejects empty path", func(t *testing.T) {
+		t.Parallel()
+
+		transfer := newReceiveTestTransfer(nil)
+
+		err := transfer.userDownloadDestinationDecision("")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "destination path is empty")
+	})
+
+	t.Run("rejects relative path", func(t *testing.T) {
+		t.Parallel()
+
+		transfer := newReceiveTestTransfer(nil)
+
+		err := transfer.userDownloadDestinationDecision("tmp/hello.txt")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must be absolute")
+	})
+
+	t.Run("accepts absolute path and cleans it", func(t *testing.T) {
+		t.Parallel()
+
+		transfer := newReceiveTestTransfer(nil)
+
+		dir := t.TempDir()
+
+		path := dir +
+			string(filepath.Separator) +
+			"nested" +
+			string(filepath.Separator) +
+			".." +
+			string(filepath.Separator) +
+			"hello.txt"
+
+		err := transfer.userDownloadDestinationDecision(path)
+
+		require.NoError(t, err)
+
+		got := <-transfer.selectedDestination
+
+		assert.Equal(t, filepath.Clean(path), got)
+		assert.True(t, filepath.IsAbs(got))
+	})
+
+	t.Run("decision can be submitted before receiver waits", func(t *testing.T) {
+		t.Parallel()
+
+		transfer := newReceiveTestTransfer(nil)
+		path := filepath.Join(t.TempDir(), "hello.txt")
+
+		submitted := make(chan error, 1)
+
+		go func() {
+			submitted <- transfer.userDownloadDestinationDecision(path)
+		}()
+
+		select {
+		case err := <-submitted:
+			require.NoError(t, err)
+		case <-time.After(receiveStateTestTimeout):
+			t.Fatal("destination submission blocked")
+		}
+
+		assert.Equal(t, filepath.Clean(path), <-transfer.selectedDestination)
+	})
+
+	t.Run("only first destination is accepted", func(t *testing.T) {
+		t.Parallel()
+
+		transfer := newReceiveTestTransfer(nil)
+
+		firstPath := filepath.Join(t.TempDir(), "first.txt")
+		secondPath := filepath.Join(t.TempDir(), "second.txt")
+
+		require.NoError(t,
+			transfer.userDownloadDestinationDecision(firstPath),
+		)
+
+		require.NoError(t,
+			transfer.userDownloadDestinationDecision(secondPath),
+		)
+
+		got := <-transfer.selectedDestination
+
+		assert.Equal(t, firstPath, got)
+
+		_, ok := <-transfer.selectedDestination
+		assert.False(t, ok)
+	})
 }
 
 func TestReceiveProcessResponse(t *testing.T) {
@@ -385,7 +549,7 @@ func TestReceiveProcessResponse(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			events := make(chan event.Event, 1)
+			events := make(chan event.Event, 2)
 
 			transfer := newReceiveTestTransfer(nil)
 			transfer.id = "transfer-123"
@@ -414,8 +578,7 @@ func TestReceiveProcessResponse(t *testing.T) {
 				}
 			}()
 
-			// Verify that the event is emitted before the transfer
-			// waits for the user's decision.
+			// First event: request acceptance.
 			gotEvent := waitForReceiveEvent(t, events)
 
 			assert.Equal(t, RequestTransferAcceptanceEvtName, gotEvent.Name())
@@ -424,8 +587,27 @@ func TestReceiveProcessResponse(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, transfer.id, payload.TransferId)
 
-			// Supply the user's decision.
+			// Submit the user's acceptance decision.
 			transfer.userTransferAcceptanceDecision(tt.accepted)
+
+			var expectedPath string
+
+			if tt.accepted {
+				// Second event: request download destination.
+				gotEvent = waitForReceiveEvent(t, events)
+
+				assert.Equal(t, RequestDownloadDestinationEvtName, gotEvent.Name())
+
+				destinationPayload, ok := gotEvent.Payload().(*RequestDownloadDestinationPayload)
+				require.True(t, ok)
+				assert.Equal(t, transfer.id, destinationPayload.TransferId)
+
+				expectedPath = filepath.Join(t.TempDir(), "hello.txt")
+
+				require.NoError(t,
+					transfer.userDownloadDestinationDecision(expectedPath),
+				)
+			}
 
 			var result responseResult
 
@@ -440,13 +622,11 @@ func TestReceiveProcessResponse(t *testing.T) {
 
 			assert.Equal(t, tt.accepted, result.response.GetAccepted())
 			assert.Equal(t, transfer.request.GetId(), result.response.GetId())
+			assert.Equal(t, expectedPath, result.destinationPath)
 
-			assert.True(t, filepath.IsAbs(result.destinationPath))
-			assert.Equal(
-				t,
-				transfer.request.GetFilename(),
-				filepath.Base(result.destinationPath),
-			)
+			if !tt.accepted {
+				assert.Empty(t, transfer.selectedDestination)
+			}
 		})
 	}
 
@@ -463,7 +643,7 @@ func TestReceiveProcessResponse(t *testing.T) {
 		assert.Empty(t, path)
 	})
 
-	t.Run("event publishing error", func(t *testing.T) {
+	t.Run("acceptance event publishing error", func(t *testing.T) {
 		t.Parallel()
 
 		expectedErr := errors.New("event publishing failed")
@@ -482,33 +662,48 @@ func TestReceiveProcessResponse(t *testing.T) {
 		assert.Nil(t, response)
 		assert.Empty(t, path)
 	})
-}
 
-func TestReceiveResolveDestination(t *testing.T) {
-	t.Parallel()
-
-	transfer := newReceiveTestTransfer(nil)
-
-	t.Run("resolves absolute destination", func(t *testing.T) {
+	t.Run("destination event publishing error", func(t *testing.T) {
 		t.Parallel()
 
-		path, err := transfer.resolveDestination("hello.txt")
+		expectedErr := errors.New("destination event publishing failed")
 
-		require.NoError(t, err)
+		events := make(chan event.Event, 1)
+		callCount := 0
 
-		assert.True(t, filepath.IsAbs(path))
-		assert.Equal(t, "hello.txt", filepath.Base(path))
-	})
+		transfer := newReceiveTestTransfer(nil)
+		transfer.id = "transfer-123"
+		transfer.state = receiveProcessingRequest
+		transfer.request = newValidReceiveRequest()
+		transfer.emitEvent = func(e event.Event) error {
+			callCount++
 
-	t.Run("uses base filename", func(t *testing.T) {
-		t.Parallel()
+			if callCount == 2 {
+				return expectedErr
+			}
 
-		path, err := transfer.resolveDestination("../../outside/hello.txt")
+			events <- e
+			return nil
+		}
 
-		require.NoError(t, err)
+		resultCh := make(chan error, 1)
 
-		assert.True(t, filepath.IsAbs(path))
-		assert.Equal(t, "hello.txt", filepath.Base(path))
+		go func() {
+			_, _, err := transfer.processResponse()
+			resultCh <- err
+		}()
+
+		gotEvent := waitForReceiveEvent(t, events)
+		assert.Equal(t, RequestTransferAcceptanceEvtName, gotEvent.Name())
+
+		transfer.userTransferAcceptanceDecision(true)
+
+		select {
+		case err := <-resultCh:
+			require.ErrorIs(t, err, expectedErr)
+		case <-time.After(receiveStateTestTimeout):
+			t.Fatal("timed out waiting for destination event error")
+		}
 	})
 }
 
@@ -692,7 +887,7 @@ func TestReceiveRun(t *testing.T) {
 			outgoing.Write,
 		)
 
-		emitted := make(chan event.Event, 1)
+		emitted := make(chan event.Event, 2)
 
 		transfer := newReceiveTransfer(
 			stream,
@@ -721,6 +916,21 @@ func TestReceiveRun(t *testing.T) {
 		// Approve the transfer.
 		transfer.userTransferAcceptanceDecision(true)
 
+		// Wait for the destination selection event.
+		destinationEvent := waitForReceiveEvent(t, emitted)
+
+		assert.Equal(t, RequestDownloadDestinationEvtName, destinationEvent.Name())
+
+		destinationPayload, ok := destinationEvent.Payload().(*RequestDownloadDestinationPayload)
+		require.True(t, ok)
+		assert.Equal(t, transferID, destinationPayload.TransferId)
+
+		destinationPath := filepath.Join(t.TempDir(), "hello.txt")
+
+		require.NoError(t,
+			transfer.userDownloadDestinationDecision(destinationPath),
+		)
+
 		result := waitForReceiveResult(t, resultCh)
 
 		waitForReceiveChannel(t, closed, "stream")
@@ -734,12 +944,8 @@ func TestReceiveRun(t *testing.T) {
 		assert.True(t, receiveResult.Response.GetAccepted())
 		assert.Equal(t, request.GetId(), receiveResult.Response.GetId())
 
+		assert.Equal(t, destinationPath, receiveResult.DestinationPath)
 		assert.True(t, filepath.IsAbs(receiveResult.DestinationPath))
-		assert.Equal(
-			t,
-			request.GetFilename(),
-			filepath.Base(receiveResult.DestinationPath),
-		)
 
 		assert.Equal(t, receiveDone, transfer.state)
 		assert.True(t, transfer.consumed)
@@ -767,7 +973,7 @@ func TestReceiveRun(t *testing.T) {
 			outgoing.Write,
 		)
 
-		emitted := make(chan event.Event, 1)
+		emitted := make(chan event.Event, 2)
 
 		transfer := newReceiveTransfer(
 			stream,
@@ -784,7 +990,9 @@ func TestReceiveRun(t *testing.T) {
 			resultCh <- transfer.run()
 		}()
 
-		waitForReceiveEvent(t, emitted)
+		// Wait for acceptance request.
+		gotEvent := waitForReceiveEvent(t, emitted)
+		assert.Equal(t, RequestTransferAcceptanceEvtName, gotEvent.Name())
 
 		// Reject the transfer.
 		transfer.userTransferAcceptanceDecision(false)
@@ -799,7 +1007,11 @@ func TestReceiveRun(t *testing.T) {
 
 		require.NoError(t, receiveResult.Err)
 		assert.False(t, receiveResult.Response.GetAccepted())
+		assert.Empty(t, receiveResult.DestinationPath)
 		assert.Equal(t, receiveDone, transfer.state)
+
+		// No destination event should have been emitted.
+		assert.Empty(t, emitted)
 
 		response := &models.TransferResponse{}
 		require.NoError(t, readMessage(bytes.NewReader(outgoing.Bytes()), response))
@@ -939,7 +1151,7 @@ func TestReceiveRun(t *testing.T) {
 			},
 		)
 
-		emitted := make(chan event.Event, 1)
+		emitted := make(chan event.Event, 2)
 
 		transfer := newReceiveTransfer(
 			stream,
@@ -956,9 +1168,19 @@ func TestReceiveRun(t *testing.T) {
 			resultCh <- transfer.run()
 		}()
 
+		// Acceptance request.
 		waitForReceiveEvent(t, emitted)
 
 		transfer.userTransferAcceptanceDecision(true)
+
+		// Destination request.
+		waitForReceiveEvent(t, emitted)
+
+		require.NoError(t,
+			transfer.userDownloadDestinationDecision(
+				filepath.Join(t.TempDir(), "hello.txt"),
+			),
+		)
 
 		result := waitForReceiveResult(t, resultCh)
 
@@ -970,56 +1192,5 @@ func TestReceiveRun(t *testing.T) {
 
 		require.ErrorIs(t, receiveResult.Err, expectedErr)
 		assert.Equal(t, receiveError, transfer.state)
-	})
-}
-
-func TestUserTransferAcceptanceDecision(t *testing.T) {
-	t.Parallel()
-
-	t.Run("decision can be submitted before receiver waits", func(t *testing.T) {
-		t.Parallel()
-
-		transfer := &receive{
-			acceptTransfer: make(chan bool, 1),
-		}
-
-		submitted := make(chan struct{})
-
-		go func() {
-			transfer.userTransferAcceptanceDecision(true)
-			close(submitted)
-		}()
-
-		// Decision submission should not block.
-		select {
-		case <-submitted:
-		case <-time.After(receiveStateTestTimeout):
-			t.Fatal("decision submission blocked")
-		}
-
-		accepted, ok := <-transfer.acceptTransfer
-
-		require.True(t, ok)
-		assert.True(t, accepted)
-	})
-
-	t.Run("only first decision is accepted", func(t *testing.T) {
-		t.Parallel()
-
-		transfer := &receive{
-			acceptTransfer: make(chan bool, 1),
-		}
-
-		transfer.userTransferAcceptanceDecision(false)
-		transfer.userTransferAcceptanceDecision(true)
-
-		accepted, ok := <-transfer.acceptTransfer
-
-		require.True(t, ok)
-		assert.False(t, accepted)
-
-		// Channel should be closed after the first decision.
-		_, ok = <-transfer.acceptTransfer
-		assert.False(t, ok)
 	})
 }
