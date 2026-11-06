@@ -17,21 +17,38 @@ type P2PNode struct {
 	transport       *quic.Transport
 	receiver        *receiver
 	sender          *sender
+	eventManager    *event.Manager
 	transferManager *transfer.Manager
 	addr            net.Addr
 	tlsConfig       *tls.Config
 	quicConfig      *quic.Config
 }
 
-func (n *P2PNode) Listen() error {
+func (n *P2PNode) listen() error {
 	return n.receiver.Listen(n.tlsConfig, n.quicConfig)
+}
+
+func (n *P2PNode) Start() error {
+	n.eventManager.StartListening()
+
+	err := n.listen()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (n *P2PNode) SendFile(receiverAddr *net.UDPAddr, filename string) error {
 	return n.sender.Send(receiverAddr, filename, n.tlsConfig, n.quicConfig)
 }
 
+func (n *P2PNode) RegisterEventHandler(handler event.EventHandlerFunc) error {
+	return n.eventManager.RegisterEventHandler(handler)
+}
+
 func (n *P2PNode) Cleanup() {
+	n.eventManager.CleanUp()
 	n.receiver.Cleanup()
 	n.sender.Cleanup()
 	n.transport.Close()
@@ -58,7 +75,8 @@ func newP2PNode(
 	quicConfig := getQuicConfig()
 
 	transport := &quic.Transport{Conn: udpConn}
-	transferManager := transfer.NewManager(addr, openReader, func(e event.Event) error { return nil }) // TODO temp
+	eventManager := event.NewManager()
+	transferManager := transfer.NewManager(addr, openReader, eventManager.EmitEvent)
 	receiver := newReceiver(transport, transferManager.Receive)
 	sender := newSender(transport, addr, transferManager.Send)
 
@@ -66,6 +84,7 @@ func newP2PNode(
 		transport:       transport,
 		receiver:        receiver,
 		sender:          sender,
+		eventManager:    eventManager,
 		transferManager: transferManager,
 		addr:            addr,
 		tlsConfig:       tlsConfig,
