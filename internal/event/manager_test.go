@@ -315,3 +315,24 @@ func TestConcurrentEmitEventAndCleanup(t *testing.T) {
 		handledCount.Load(),
 	)
 }
+
+func TestRegisterEventHandler(t *testing.T) {
+	t.Parallel()
+
+	t.Run("success", func(t *testing.T) {
+		buf := make(chan int, 1)
+		manager := NewManager()
+		manager.RegisterEventHandler(func(Event) error {
+			buf <- 1
+			return nil
+		})
+
+		event, err := NewEvent("test", &testEventPayload{})
+		require.NoError(t, err)
+
+		err = manager.handler.handle(event)
+
+		require.NoError(t, err)
+		assert.Equal(t, 1, <-buf)
+	})
+}
