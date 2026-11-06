@@ -64,7 +64,7 @@ func main() {
 	node, err := node.NewP2PNode(senderAddr)
 	defer node.Cleanup()
 
-	err = node.Listen()
+	err = node.Start()
 	if err != nil {
 		log.Fatalf("node listen failed: %v\n", err)
 	}
