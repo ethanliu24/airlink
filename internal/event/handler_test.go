@@ -16,8 +16,9 @@ func TestHandlerLifecycle(t *testing.T) {
 		t.Run("success", func(t *testing.T) {
 			h := newHandler()
 			var called bool
-			callback := func(e Event) {
+			callback := func(e Event) error {
 				called = true
+				return nil
 			}
 
 			err := h.register(callback)
@@ -35,8 +36,8 @@ func TestHandlerLifecycle(t *testing.T) {
 
 		t.Run("fails when handler already registered", func(t *testing.T) {
 			h := newHandler()
-			callback1 := func(e Event) {}
-			callback2 := func(e Event) {}
+			callback1 := func(e Event) error { return nil }
+			callback2 := func(e Event) error { return nil }
 
 			err1 := h.register(callback1)
 			require.NoError(t, err1)

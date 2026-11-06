@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"airlink/internal/event"
 	"airlink/internal/transfer/models"
 	"errors"
 	"fmt"
@@ -37,6 +38,10 @@ type receive struct {
 	stream          io.ReadWriteCloser
 	destinationPath string
 	consumed        bool
+
+	emitEvent      event.EmitEventFunc
+	acceptTransfer chan bool
+	acceptOnce     sync.Once
 }
 
 type receiveResult struct {
@@ -61,12 +66,17 @@ func (r *receive) run() TransferResult {
 
 	var receiveErr error
 
-	if r.consumed {
+	if r.getId() == "" {
+		receiveErr = fmt.Errorf("transfer receive cannot start, id not set - call setId(id) to set")
+		r.state = receiveError
+	} else if r.consumed {
 		receiveErr = fmt.Errorf("<run> already called on a receive")
 		r.state = receiveError
 	}
 
-	r.consumed = true
+	if !r.consumed {
+		r.consumed = true
+	}
 
 outer:
 	for {
@@ -101,7 +111,11 @@ outer:
 				continue outer
 			}
 
-			r.state = receiveReceiving
+			if r.response.Accepted {
+				r.state = receiveReceiving
+			} else {
+				r.state = receiveDone
+			}
 		case receiveReceiving:
 			_, err := r.receiveData()
 			if err != nil {
@@ -149,7 +163,28 @@ func (r *receive) ingestRequst() error {
 	return nil
 }
 
-// TODO always accept for now, figure out how to get data from user
+func (r *receive) requestUserTransferAcceptance(transferId TransferId) error {
+	payload := &RequestTransferAcceptancePayload{transferId: transferId}
+	event, err := event.NewEvent(RequestTransferAcceptanceEvtName, payload)
+	if err != nil {
+		return err
+	}
+
+	err = r.emitEvent(event)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *receive) userTransferAcceptanceDecision(accepted bool) {
+	r.acceptOnce.Do(func () {
+		r.acceptTransfer <- accepted
+		close(r.acceptTransfer)
+	})
+}
+
 // TODO return detination too
 func (r *receive) processResponse() (*models.TransferResponse, string, error) {
 	if r.state != receiveProcessingRequest {
@@ -160,6 +195,13 @@ func (r *receive) processResponse() (*models.TransferResponse, string, error) {
 		)
 	}
 
+	err := r.requestUserTransferAcceptance(r.getId())
+	if err != nil {
+		return nil, "", err
+	}
+
+	accepted := <-r.acceptTransfer
+
 	destinationPath, err := r.resolveDestination(r.request.GetFilename())
 	if err != nil {
 		return nil, "", err
@@ -167,7 +209,7 @@ func (r *receive) processResponse() (*models.TransferResponse, string, error) {
 
 	return &models.TransferResponse{
 		Id:           r.request.Id,
-		Accepted:     true,
+		Accepted:     accepted,
 		RejectReason: nil,
 	}, destinationPath, nil
 }
@@ -234,11 +276,14 @@ func (r *receive) receiveData() (int, error) {
 	return totalBytesRead, nil
 }
 
-func newReceiveTransfer(stream io.ReadWriteCloser) *receive {
+func newReceiveTransfer(stream io.ReadWriteCloser, emitEvent event.EmitEventFunc) *receive {
 	return &receive{
-		state:    receiveInit,
-		request:  &models.TransferRequest{},
-		stream:   stream,
-		consumed: false,
+		id:             "",
+		state:          receiveInit,
+		request:        &models.TransferRequest{},
+		stream:         stream,
+		consumed:       false,
+		acceptTransfer: make(chan bool, 1),
+		emitEvent:      emitEvent,
 	}
 }

@@ -1,6 +1,7 @@
 package node
 
 import (
+	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer"
 	"crypto/tls"
@@ -57,7 +58,7 @@ func newP2PNode(
 	quicConfig := getQuicConfig()
 
 	transport := &quic.Transport{Conn: udpConn}
-	transferManager := transfer.NewManager(addr, openReader)
+	transferManager := transfer.NewManager(addr, openReader, func(e event.Event) error { return nil }) // TODO temp
 	receiver := newReceiver(transport, transferManager.Receive)
 	sender := newSender(transport, addr, transferManager.Send)
 
