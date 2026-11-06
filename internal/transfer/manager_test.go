@@ -502,3 +502,32 @@ func TestNewManager(t *testing.T) {
 	assert.NotNil(t, mgr.generateID)
 }
 
+func TestGetTransfer(t *testing.T) {
+	t.Parallel()
+
+	t.Run("transfer exists", func(t *testing.T) {
+		id := "test"
+		transfers := make(map[string]transfer)
+
+		transfers[id] = &send{id: id}
+
+		manager := &Manager{transfers: transfers}
+		transfer, ok := manager.GetTransfer(id)
+
+		require.True(t, ok)
+		require.Equal(t, transfer.getId(), id)
+	})
+
+	t.Run("transfer does not exist", func(t *testing.T) {
+		id := "test"
+		transfers := make(map[string]transfer)
+
+		transfers[id] = &send{id: id}
+
+		manager := &Manager{transfers: transfers}
+		transfer, ok := manager.GetTransfer("doesn't exist")
+
+		require.False(t, ok)
+		require.Nil(t, nil, transfer)
+	})
+}

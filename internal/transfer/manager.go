@@ -82,6 +82,11 @@ func (m *Manager) register(t transfer) (TransferId, error) {
 	return "", fmt.Errorf("manager receive transfer id generation max retries reached - impossible!")
 }
 
+func (m *Manager) GetTransfer(id TransferId) (transfer, bool) {
+	transfer, ok := m.transfers[id]
+	return transfer, ok
+}
+
 func NewManager(addr net.Addr, openReader file.OpenReaderFunc, emitEvent event.EmitEventFunc) *Manager {
 	return &Manager{
 		transfers:  make(map[string]transfer),
