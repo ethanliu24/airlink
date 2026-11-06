@@ -33,6 +33,10 @@ func (m *Manager) EmitEvent(event Event) error {
 	return nil
 }
 
+func (m *Manager) RegisterEventHandler(handler EventHandlerFunc) error {
+	return m.handler.register(handler)
+}
+
 func (m *Manager) listen() {
 	defer close(m.done)
 
@@ -65,10 +69,9 @@ func (m *Manager) CleanUp() {
 	<-m.done
 }
 
-func NewManager(eventHandler EventHandlerFunc) *Manager {
+func NewManager() *Manager {
 	bus := newBus()
 	handler := newHandler()
-	handler.register(eventHandler)
 
 	return &Manager{
 		bus:     bus,

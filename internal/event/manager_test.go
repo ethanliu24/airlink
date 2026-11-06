@@ -34,7 +34,8 @@ func newTestEvent(t *testing.T, name string) Event {
 func TestNewManager(t *testing.T) {
 	t.Parallel()
 
-	manager := NewManager(func(Event) error { return nil })
+	manager := NewManager()
+	manager.RegisterEventHandler(func(Event) error { return nil })
 
 	require.NotNil(t, manager)
 	require.NotNil(t, manager.bus)
@@ -49,7 +50,8 @@ func TestEmitEvent(t *testing.T) {
 
 	handled := make(chan Event, 1)
 
-	manager := NewManager(func(event Event) error {
+	manager := NewManager()
+	manager.RegisterEventHandler(func(event Event) error {
 		handled <- event
 		return nil
 	})
@@ -90,7 +92,8 @@ func TestStartListening(t *testing.T) {
 		})
 	}
 
-	manager := NewManager(func(event Event) error  {
+	manager := NewManager()
+	manager.RegisterEventHandler(func(event Event) error  {
 		switch event.Name() {
 		case "first.event":
 			close(firstStarted)
@@ -157,7 +160,8 @@ func TestManagerCleanup(t *testing.T) {
 	handlerStarted := make(chan struct{})
 	releaseHandler := make(chan struct{})
 
-	manager := NewManager(func(Event) error {
+	manager := NewManager()
+	manager.RegisterEventHandler(func(Event) error {
 		close(handlerStarted)
 		<-releaseHandler
 		return nil
@@ -204,7 +208,8 @@ func TestManagerCleanup(t *testing.T) {
 func TestManagerCleanupBeforeStart(t *testing.T) {
 	t.Parallel()
 
-	manager := NewManager(func(Event) error { return nil })
+	manager := NewManager()
+	manager.RegisterEventHandler(func(Event) error { return nil })
 
 	assert.NotPanics(t, func() {
 		manager.CleanUp()
@@ -226,7 +231,8 @@ func TestManagerCleanupBeforeStart(t *testing.T) {
 func TestEmitEventAfterCleanup(t *testing.T) {
 	t.Parallel()
 
-	manager := NewManager(func(Event) error { return nil })
+	manager := NewManager()
+	manager.RegisterEventHandler(func(Event) error { return nil })
 
 	manager.StartListening()
 	manager.CleanUp()
@@ -246,7 +252,8 @@ func TestConcurrentEmitEventAndCleanup(t *testing.T) {
 		acceptedCount atomic.Int32
 	)
 
-	manager := NewManager(func(Event) error {
+	manager := NewManager()
+	manager.RegisterEventHandler(func(Event) error {
 		handledCount.Add(1)
 		return nil
 	})
