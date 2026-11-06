@@ -2,7 +2,7 @@ package event
 
 import "fmt"
 
-type EventHandlerFunc func(Event)
+type EventHandlerFunc func(Event) error
 
 type handler struct {
 	handle     EventHandlerFunc

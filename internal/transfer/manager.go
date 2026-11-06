@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"airlink/internal/event"
 	"airlink/internal/file"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ type Manager struct {
 
 	addr       net.Addr
 	openReader file.OpenReaderFunc
+	emitEvent  event.EmitEventFunc
 	generateID generateIdTransferFunc
 }
 
@@ -43,7 +45,7 @@ func (m *Manager) Send(stream io.ReadWriteCloser, filename string) (TransferId, 
 }
 
 func (m *Manager) Receive(stream io.ReadWriteCloser) (TransferId, error) {
-	transfer := newReceiveTransfer(stream)
+	transfer := newReceiveTransfer(stream, m.emitEvent)
 	id, err := m.register(transfer)
 
 	if err != nil {
@@ -80,11 +82,12 @@ func (m *Manager) register(t transfer) (TransferId, error) {
 	return "", fmt.Errorf("manager receive transfer id generation max retries reached - impossible!")
 }
 
-func NewManager(addr net.Addr, openReader file.OpenReaderFunc) *Manager {
+func NewManager(addr net.Addr, openReader file.OpenReaderFunc, emitEvent event.EmitEventFunc) *Manager {
 	return &Manager{
 		transfers:  make(map[string]transfer),
 		addr:       addr,
 		openReader: openReader,
+		emitEvent:  emitEvent,
 		generateID: generateTransferId,
 	}
 }

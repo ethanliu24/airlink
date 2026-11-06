@@ -19,6 +19,8 @@ type Manager struct {
 
 var ErrManagerClosed = errors.New("event manager is closed")
 
+type EmitEventFunc func(Event) error
+
 func (m *Manager) EmitEvent(event Event) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

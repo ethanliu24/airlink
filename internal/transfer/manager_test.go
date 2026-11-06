@@ -1,18 +1,19 @@
 package transfer
 
 import (
+	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
 	"bytes"
+	"errors"
 	"io"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
-    "errors"
-    "testing"
 
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func waitForManagerChannel(
@@ -491,7 +492,7 @@ func TestManagerReceive(t *testing.T) {
 
 func TestNewManager(t *testing.T) {
 	mockAddr := testAddr()
-	mgr := NewManager(mockAddr, newMockReader)
+	mgr := NewManager(mockAddr, newMockReader, func(e event.Event) error { return nil })
 
 	require.NotNil(t, mgr)
 	assert.NotNil(t, mgr.transfers)
