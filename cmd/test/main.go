@@ -1,7 +1,9 @@
 package main
 
 import (
+	"airlink/internal/event"
 	"airlink/internal/node"
+	"airlink/internal/transfer"
 	"bufio"
 	"flag"
 	"fmt"
@@ -34,6 +36,36 @@ func printToTerminal(format string, a ...any) {
 	fmt.Fprintf(f, format, a...)
 }
 
+func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
+	return func(e event.Event) error {
+		switch e.Name() {
+		case transfer.RequestTransferAcceptanceEvtName:
+			payload := e.Payload().(*transfer.RequestTransferAcceptancePayload)
+			scanner := bufio.NewScanner(os.Stdin)
+
+			fmt.Print("Accept Transfer? [y/n]")
+			if scanner.Scan() {
+				input := strings.TrimSpace(scanner.Text())
+
+				accepted := false
+				switch strings.ToLower(input) {
+				case "y", "yes", "1":
+					accepted = true
+				}
+
+				err := node.SubmitTransferAcceptDecision(payload.TransferId, accepted)
+				if err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("unrecognized event name for node: %s", e.Name())
+		}
+
+		return nil
+	}
+}
+
 // Run the commands in two terminals:
 // go run cmd/test/main.go --sender=true
 // go run cmd/test/main.go --sender=false > tmp/listener.txt
@@ -62,6 +94,7 @@ func main() {
 	}
 
 	node, err := node.NewP2PNode(senderAddr)
+	node.RegisterEventHandler(eventHandler(node))
 	defer node.Cleanup()
 
 	err = node.Start()
