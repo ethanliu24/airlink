@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sync"
 )
@@ -24,7 +23,6 @@ const (
 )
 
 const (
-	defaultDestinationDir  = "../../tmp"
 	receiveBufferSizeBytes = 1024 * 64
 )
 
@@ -39,9 +37,11 @@ type receive struct {
 	destinationPath string
 	consumed        bool
 
-	emitEvent      event.EmitEventFunc
-	acceptTransfer chan bool
-	acceptOnce     sync.Once
+	emitEvent              event.EmitEventFunc
+	acceptTransfer         chan bool
+	acceptOnce             sync.Once
+	selectedDestination    chan string
+	requestDestinationOnce sync.Once
 }
 
 type receiveResult struct {
@@ -179,13 +179,46 @@ func (r *receive) requestUserTransferAcceptance(transferId TransferId) error {
 }
 
 func (r *receive) userTransferAcceptanceDecision(accepted bool) {
-	r.acceptOnce.Do(func () {
+	r.acceptOnce.Do(func() {
 		r.acceptTransfer <- accepted
 		close(r.acceptTransfer)
 	})
 }
 
-// TODO return detination too
+func (r *receive) requestDownloadDestination(transferId TransferId) error {
+	payload := &RequestDownloadDestinationPayload{TransferId: transferId}
+	event, err := event.NewEvent(RequestDownloadDestinationEvtName, payload)
+	if err != nil {
+		return err
+	}
+
+	err = r.emitEvent(event)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *receive) userDownloadDestinationDecision(path string) error {
+	if path == "" {
+		return fmt.Errorf("userDownloadDestinationDecision destination path is empty")
+	}
+
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("userDownloadDestinationDecision destination path must be absolute")
+	}
+
+	pathAbs := filepath.Clean(path)
+
+	r.requestDestinationOnce.Do(func() {
+		r.selectedDestination <- pathAbs
+		close(r.selectedDestination)
+	})
+
+	return nil
+}
+
 func (r *receive) processResponse() (*models.TransferResponse, string, error) {
 	if r.state != receiveProcessingRequest {
 		return nil, "", fmt.Errorf(
@@ -202,30 +235,26 @@ func (r *receive) processResponse() (*models.TransferResponse, string, error) {
 
 	accepted := <-r.acceptTransfer
 
-	destinationPath, err := r.resolveDestination(r.request.GetFilename())
+	if !accepted {
+		return &models.TransferResponse{
+			Id:           r.request.Id,
+			Accepted:     false,
+			RejectReason: nil,
+		}, "", nil
+	}
+
+	err = r.requestDownloadDestination(r.getId())
 	if err != nil {
 		return nil, "", err
 	}
+
+	destination := <-r.selectedDestination
 
 	return &models.TransferResponse{
 		Id:           r.request.Id,
 		Accepted:     accepted,
 		RejectReason: nil,
-	}, destinationPath, nil
-}
-
-func (r *receive) resolveDestination(filename string) (string, error) {
-	destinationDir, err := filepath.Abs(defaultDestinationDir)
-	if err != nil {
-		return "", err
-	}
-
-	if err := os.MkdirAll(destinationDir, 0o755); err != nil {
-		return "", err
-	}
-
-	filename = filepath.Base(filename)
-	return filepath.Join(destinationDir, filename), nil
+	}, destination, nil
 }
 
 func (r *receive) sendResponse() error {
@@ -278,12 +307,13 @@ func (r *receive) receiveData() (int, error) {
 
 func newReceiveTransfer(stream io.ReadWriteCloser, emitEvent event.EmitEventFunc) *receive {
 	return &receive{
-		id:             "",
-		state:          receiveInit,
-		request:        &models.TransferRequest{},
-		stream:         stream,
-		consumed:       false,
-		acceptTransfer: make(chan bool, 1),
-		emitEvent:      emitEvent,
+		id:                  "",
+		state:               receiveInit,
+		request:             &models.TransferRequest{},
+		stream:              stream,
+		consumed:            false,
+		acceptTransfer:      make(chan bool, 1),
+		selectedDestination: make(chan string, 1),
+		emitEvent:           emitEvent,
 	}
 }

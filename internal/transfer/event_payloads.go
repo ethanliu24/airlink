@@ -10,3 +10,8 @@ const RequestTransferAcceptanceEvtName = moduleEventPrefix + "." + "requestTrans
 type RequestTransferAcceptancePayload struct {
 	TransferId TransferId
 }
+
+const RequestDownloadDestinationEvtName = moduleEventPrefix + "." + "requestDownloadDestination"
+type RequestDownloadDestinationPayload struct {
+	TransferId TransferId
+}
