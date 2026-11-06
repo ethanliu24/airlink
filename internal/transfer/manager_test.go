@@ -1,3 +1,4 @@
+
 package transfer
 
 import (
@@ -7,6 +8,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,130 +19,133 @@ import (
 )
 
 func waitForManagerChannel(
-    t *testing.T,
-    ch <-chan struct{},
-    resource string,
+	t *testing.T,
+	ch <-chan struct{},
+	resource string,
 ) {
-    t.Helper()
+	t.Helper()
 
-    select {
-    case <-ch:
-    case <-time.After(2 * time.Second):
-        t.Fatalf("timed out waiting for %s to close", resource)
-    }
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s to close", resource)
+	}
 }
 
 func TestManagerRegister(t *testing.T) {
-    t.Parallel()
+	t.Parallel()
 
-    tests := []struct {
-        name          string
-        existingIDs   []string
-        generatedIDs  []string
-        generateErr   error
-        expectedID    string
-        expectedCalls int
-        expectedErr   error
-    }{
-        {
-            name:          "successful registration",
-            generatedIDs:  []string{"new-id"},
-            expectedID:    "new-id",
-            expectedCalls: 1,
-        },
-        {
-            name:          "retry after ID collision",
-            existingIDs:   []string{"existing-id"},
-            generatedIDs:  []string{"existing-id", "new-id"},
-            expectedID:    "new-id",
-            expectedCalls: 2,
-        },
-        {
-            name:          "ID generation error",
-            generateErr:   errors.New("ID generation failed"),
-            expectedCalls: 1,
-            expectedErr:   errors.New("ID generation failed"),
-        },
-        {
-            name:          "exhausted retries",
-            existingIDs:   []string{"existing-id"},
-            generatedIDs:  []string{
-                "existing-id",
-                "existing-id",
-                "existing-id",
-            },
-            expectedCalls: idGenRetryTimes,
-            expectedErr:   errors.New("manager receive transfer id generation max retries reached - impossible!"),
-        },
-    }
+	tests := []struct {
+		name          string
+		existingIDs   []string
+		generatedIDs  []string
+		generateErr   error
+		expectedID    string
+		expectedCalls int
+		expectedErr   error
+	}{
+		{
+			name:          "successful registration",
+			generatedIDs:  []string{"new-id"},
+			expectedID:    "new-id",
+			expectedCalls: 1,
+		},
+		{
+			name:          "retry after ID collision",
+			existingIDs:   []string{"existing-id"},
+			generatedIDs:  []string{"existing-id", "new-id"},
+			expectedID:    "new-id",
+			expectedCalls: 2,
+		},
+		{
+			name:          "ID generation error",
+			generateErr:   errors.New("ID generation failed"),
+			expectedCalls: 1,
+			expectedErr:   errors.New("ID generation failed"),
+		},
+		{
+			name:         "exhausted retries",
+			existingIDs:  []string{"existing-id"},
+			generatedIDs: []string{
+				"existing-id",
+				"existing-id",
+				"existing-id",
+			},
+			expectedCalls: idGenRetryTimes,
+			expectedErr: errors.New(
+				"manager receive transfer id generation max retries reached - impossible!",
+			),
+		},
+	}
 
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            t.Parallel()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-            var transferUnderTest = &send{}
+			var transferUnderTest = &send{}
 
-            existing := make(map[string]transfer)
-            for _, id := range tt.existingIDs {
-                existing[id] = nil
-            }
+			existing := make(map[string]transfer)
 
-            calls := 0
+			for _, id := range tt.existingIDs {
+				existing[id] = nil
+			}
 
-            manager := &Manager{
-                transfers: existing,
-                generateID: func() (string, error) {
-                    calls++
+			calls := 0
 
-                    if tt.generateErr != nil {
-                        return "", tt.generateErr
-                    }
+			manager := &Manager{
+				transfers: existing,
+				generateID: func() (string, error) {
+					calls++
 
-                    if calls > len(tt.generatedIDs) {
-                        return "", errors.New("unexpected ID generation call")
-                    }
+					if tt.generateErr != nil {
+						return "", tt.generateErr
+					}
 
-                    return tt.generatedIDs[calls-1], nil
-                },
-            }
+					if calls > len(tt.generatedIDs) {
+						return "", errors.New("unexpected ID generation call")
+					}
 
-            id, err := manager.register(transferUnderTest)
+					return tt.generatedIDs[calls-1], nil
+				},
+			}
 
-            assert.Equal(t, tt.expectedCalls, calls)
+			id, err := manager.register(transferUnderTest)
 
-            if tt.expectedErr != nil {
-                require.Error(t, err)
-                assert.Empty(t, id)
+			assert.Equal(t, tt.expectedCalls, calls)
 
-                if tt.name == "ID generation error" {
-                    assert.ErrorIs(t, err, tt.generateErr)
-                } else {
-                    assert.Contains(t, err.Error(), tt.expectedErr.Error())
-                }
+			if tt.expectedErr != nil {
+				require.Error(t, err)
+				assert.Empty(t, id)
 
-                return
-            }
+				if tt.name == "ID generation error" {
+					assert.ErrorIs(t, err, tt.generateErr)
+				} else {
+					assert.Contains(t, err.Error(), tt.expectedErr.Error())
+				}
 
-            require.NoError(t, err)
-            assert.Equal(t, tt.expectedID, id)
+				return
+			}
 
-            manager.mu.Lock()
-            registeredTransfer, exists := manager.transfers[id]
-            manager.mu.Unlock()
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedID, id)
 
-            assert.True(t, exists)
-            assert.Equal(t, transferUnderTest, registeredTransfer)
-        })
-    }
+			manager.mu.Lock()
+			registeredTransfer, exists := manager.transfers[id]
+			manager.mu.Unlock()
 
-	for _, transferUnderTest := range []transfer {
+			assert.True(t, exists)
+			assert.Equal(t, transferUnderTest, registeredTransfer)
+		})
+	}
+
+	for _, transferUnderTest := range []transfer{
 		&send{},
 		&receive{},
-	}{
+	} {
 		t.Run("sets transfer id after registration", func(t *testing.T) {
 			manager := &Manager{
 				transfers: make(map[string]transfer),
-				generateID: func () (TransferId, error) {
+				generateID: func() (string, error) {
 					return "test", nil
 				},
 			}
@@ -150,8 +155,9 @@ func TestManagerRegister(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, transferId)
-			assert.Equal(t, id, "test")
-			assert.Equal(t, transferId, "test")
+
+			assert.Equal(t, "test", id)
+			assert.Equal(t, "test", transferId)
 		})
 	}
 }
@@ -192,6 +198,7 @@ func TestManagerSend(t *testing.T) {
 		}))
 
 		var written bytes.Buffer
+
 		streamClosed := make(chan struct{})
 		var streamCloseCount atomic.Int32
 		var streamCloseOnce sync.Once
@@ -232,6 +239,7 @@ func TestManagerSend(t *testing.T) {
 		manager.mu.Unlock()
 
 		require.True(t, exists)
+
 		_, isSend := registeredTransfer.(*send)
 		assert.True(t, isSend)
 
@@ -381,8 +389,8 @@ func TestManagerReceive(t *testing.T) {
 		streamClosed := make(chan struct{})
 
 		var (
-			readOnce       sync.Once
-			closeOnce      sync.Once
+			readOnce         sync.Once
+			closeOnce        sync.Once
 			streamCloseCount atomic.Int32
 		)
 
@@ -492,13 +500,21 @@ func TestManagerReceive(t *testing.T) {
 
 func TestNewManager(t *testing.T) {
 	mockAddr := testAddr()
-	mgr := NewManager(mockAddr, newMockReader, func(e event.Event) error { return nil })
+
+	mgr := NewManager(
+		mockAddr,
+		newMockReader,
+		func(e event.Event) error {
+			return nil
+		},
+	)
 
 	require.NotNil(t, mgr)
 	assert.NotNil(t, mgr.transfers)
 	assert.Empty(t, mgr.transfers)
 	assert.Equal(t, mockAddr, mgr.addr)
 	assert.NotNil(t, mgr.openReader)
+	assert.NotNil(t, mgr.emitEvent)
 	assert.NotNil(t, mgr.generateID)
 }
 
@@ -512,10 +528,10 @@ func TestGetTransfer(t *testing.T) {
 		transfers[id] = &send{id: id}
 
 		manager := &Manager{transfers: transfers}
-		transfer, ok := manager.GetTransfer(id)
+		got, ok := manager.getTransfer(id)
 
 		require.True(t, ok)
-		require.Equal(t, transfer.getId(), id)
+		require.Equal(t, id, got.getId())
 	})
 
 	t.Run("transfer does not exist", func(t *testing.T) {
@@ -525,10 +541,10 @@ func TestGetTransfer(t *testing.T) {
 		transfers[id] = &send{id: id}
 
 		manager := &Manager{transfers: transfers}
-		transfer, ok := manager.GetTransfer("doesn't exist")
+		got, ok := manager.getTransfer("doesn't exist")
 
 		require.False(t, ok)
-		require.Nil(t, nil, transfer)
+		require.Nil(t, got)
 	})
 }
 
@@ -635,5 +651,138 @@ func TestSubmitTransferAcceptDecision(t *testing.T) {
 
 		require.True(t, ok)
 		assert.False(t, accepted)
+	})
+}
+
+// -----------------------------------------------------------------------------
+// Download destination submission
+// -----------------------------------------------------------------------------
+
+func TestSubmitDownloadDestination(t *testing.T) {
+	t.Parallel()
+
+	const id = TransferId("transfer-123")
+
+	t.Run("submits absolute destination", func(t *testing.T) {
+		t.Parallel()
+
+		receiveTransfer := &receive{
+			selectedDestination: make(chan string, 1),
+		}
+
+		manager := &Manager{
+			transfers: map[string]transfer{
+				string(id): receiveTransfer,
+			},
+		}
+
+		path := filepath.Join(t.TempDir(), "hello.txt")
+
+		err := manager.SubmitDownloadDestination(id, path)
+
+		require.NoError(t, err)
+
+		got := <-receiveTransfer.selectedDestination
+
+		assert.Equal(t, filepath.Clean(path), got)
+		assert.True(t, filepath.IsAbs(got))
+	})
+
+	t.Run("rejects empty destination", func(t *testing.T) {
+		t.Parallel()
+
+		receiveTransfer := &receive{
+			selectedDestination: make(chan string, 1),
+		}
+
+		manager := &Manager{
+			transfers: map[string]transfer{
+				string(id): receiveTransfer,
+			},
+		}
+
+		err := manager.SubmitDownloadDestination(id, "")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "destination path is empty")
+		assert.Empty(t, receiveTransfer.selectedDestination)
+	})
+
+	t.Run("rejects relative destination", func(t *testing.T) {
+		t.Parallel()
+
+		receiveTransfer := &receive{
+			selectedDestination: make(chan string, 1),
+		}
+
+		manager := &Manager{
+			transfers: map[string]transfer{
+				string(id): receiveTransfer,
+			},
+		}
+
+		err := manager.SubmitDownloadDestination(id, "tmp/hello.txt")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must be absolute")
+		assert.Empty(t, receiveTransfer.selectedDestination)
+	})
+
+	t.Run("transfer does not exist", func(t *testing.T) {
+		t.Parallel()
+
+		manager := &Manager{
+			transfers: make(map[string]transfer),
+		}
+
+		err := manager.SubmitDownloadDestination(id, filepath.Join(t.TempDir(), "hello.txt"))
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "receive transfer does not exist")
+	})
+
+	t.Run("transfer is not a receive transfer", func(t *testing.T) {
+		t.Parallel()
+
+		manager := &Manager{
+			transfers: map[string]transfer{
+				string(id): &send{},
+			},
+		}
+
+		err := manager.SubmitDownloadDestination(
+			id,
+			filepath.Join(t.TempDir(), "hello.txt"),
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "transfer is not a receive transfer")
+	})
+
+	t.Run("only first destination is submitted", func(t *testing.T) {
+		t.Parallel()
+
+		receiveTransfer := &receive{
+			selectedDestination: make(chan string, 1),
+		}
+
+		manager := &Manager{
+			transfers: map[string]transfer{
+				string(id): receiveTransfer,
+			},
+		}
+
+		firstPath := filepath.Join(t.TempDir(), "first.txt")
+		secondPath := filepath.Join(t.TempDir(), "second.txt")
+
+		require.NoError(t, manager.SubmitDownloadDestination(id, firstPath))
+		require.NoError(t, manager.SubmitDownloadDestination(id, secondPath))
+
+		got := <-receiveTransfer.selectedDestination
+
+		assert.Equal(t, firstPath, got)
+
+		_, ok := <-receiveTransfer.selectedDestination
+		assert.False(t, ok)
 	})
 }

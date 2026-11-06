@@ -82,24 +82,45 @@ func (m *Manager) register(t transfer) (TransferId, error) {
 	return "", fmt.Errorf("manager receive transfer id generation max retries reached - impossible!")
 }
 
-func (m *Manager) GetTransfer(id TransferId) (transfer, bool) {
+func (m *Manager) getTransfer(id TransferId) (transfer, bool) {
+	m.mu.Lock()
+    defer m.mu.Unlock()
+	
 	transfer, ok := m.transfers[id]
 	return transfer, ok
 }
 
-func (m *Manager) SubmitTransferAcceptDecision(id TransferId, accepted bool) error {
-	receiveTransfer, exist := m.GetTransfer(id)
+func (m *Manager) getReceiveTransfer(id TransferId, callsite string) (*receive, error) {
+	receiveTransfer, exist := m.getTransfer(id)
 	if !exist {
-		return fmt.Errorf("SubmitTransferAcceptDecision receive transfer does not exist - id: %s", id)
+		return nil, fmt.Errorf("%s receive transfer does not exist - id: %s", callsite, id)
 	}
 
 	transfer, ok := receiveTransfer.(*receive)
 	if !ok {
-		return fmt.Errorf("SubmitTransferAcceptDecision transfer is not a receive transfer - id: %s", id)
+		return nil, fmt.Errorf("%s transfer is not a receive transfer - id: %s", callsite, id)
+	}
+
+	return transfer, nil
+}
+
+func (m *Manager) SubmitTransferAcceptDecision(id TransferId, accepted bool) error {
+	transfer, err := m.getReceiveTransfer(id, "SubmitTransferAcceptDecision")
+	if err != nil {
+		return err
 	}
 
 	transfer.userTransferAcceptanceDecision(accepted)
 	return nil
+}
+
+func (m *Manager) SubmitDownloadDestination(id TransferId, destination string) error {
+	transfer, err := m.getReceiveTransfer(id, "SubmitDownloadDestination")
+	if err != nil {
+		return err
+	}
+
+	return transfer.userDownloadDestinationDecision(destination)
 }
 
 func NewManager(addr net.Addr, openReader file.OpenReaderFunc, emitEvent event.EmitEventFunc) *Manager {
