@@ -1,10 +1,11 @@
-
 package transfer
 
 import (
 	"airlink/internal/event"
 	"airlink/internal/transfer/models"
+
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"path/filepath"
@@ -19,10 +20,20 @@ import (
 
 const receiveStateTestTimeout = 2 * time.Second
 
+var errReceiveTestStreamAborted = errors.New("receive test stream aborted")
+
 func newReceiveTestStream(
 	readFunc func([]byte) (int, error),
 	writeFunc func([]byte) (int, error),
 ) (*mockStream, <-chan struct{}, func() int) {
+	stream, closed, getCloseCount, _, _ := newReceiveTestStreamWithAbort(readFunc, writeFunc)
+	return stream, closed, getCloseCount
+}
+
+func newReceiveTestStreamWithAbort(
+	readFunc func([]byte) (int, error),
+	writeFunc func([]byte) (int, error),
+) (*mockStream, <-chan struct{}, func() int, <-chan struct{}, func() int) {
 	if readFunc == nil {
 		readFunc = func([]byte) (int, error) {
 			return 0, io.EOF
@@ -36,11 +47,14 @@ func newReceiveTestStream(
 	}
 
 	closed := make(chan struct{})
+	aborted := make(chan struct{})
 
 	var (
 		closeOnce  sync.Once
+		abortOnce  sync.Once
 		mu         sync.Mutex
 		closeCount int
+		abortCount int
 	)
 
 	stream := &mockStream{
@@ -57,16 +71,55 @@ func newReceiveTestStream(
 
 			return nil
 		},
+		abortFunc: func() {
+			mu.Lock()
+			abortCount++
+			mu.Unlock()
+
+			abortOnce.Do(func() {
+				close(aborted)
+			})
+		},
 	}
 
 	getCloseCount := func() int {
 		mu.Lock()
 		defer mu.Unlock()
-
 		return closeCount
 	}
 
-	return stream, closed, getCloseCount
+	getAbortCount := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return abortCount
+	}
+
+	return stream, closed, getCloseCount, aborted, getAbortCount
+}
+
+type receiveBlockingReader struct {
+	input       *bytes.Reader
+	readStarted chan struct{}
+	releaseRead chan struct{}
+	abortRead   <-chan struct{}
+	startedOnce sync.Once
+}
+
+func (r *receiveBlockingReader) Read(p []byte) (int, error) {
+	if r.input.Len() > 0 {
+		return r.input.Read(p)
+	}
+
+	r.startedOnce.Do(func() {
+		close(r.readStarted)
+	})
+
+	select {
+	case <-r.releaseRead:
+		return 0, io.EOF
+	case <-r.abortRead:
+		return 0, errReceiveTestStreamAborted
+	}
 }
 
 func newReceiveTestInput(
@@ -86,20 +139,45 @@ func newReceiveTestInput(
 	return bytes.NewReader(incoming.Bytes())
 }
 
-func newReceiveTestTransfer(stream io.ReadWriteCloser) *receive {
-	return newReceiveTransfer(stream, func(event.Event) error {
+func newReceiveTestTransfer(
+	stream TransferStream,
+	handlers ...event.EmitEventFunc,
+) *receive {
+	emitEvent := event.EmitEventFunc(func(event.Event) error {
 		return nil
 	})
+
+	if len(handlers) > 0 {
+		emitEvent = handlers[0]
+	}
+
+	return newReceiveTransfer(
+		stream,
+		emitEvent,
+		context.Background(),
+		func() {},
+		receiveStateTestTimeout,
+	)
+}
+
+func newReceiveTestTransferWithContext(
+	stream TransferStream,
+	emitEvent event.EmitEventFunc,
+	ctx context.Context,
+	cancel context.CancelFunc,
+	timeout time.Duration,
+) *receive {
+	return newReceiveTransfer(stream, emitEvent, ctx, cancel, timeout)
 }
 
 func newValidReceiveRequest() *models.TransferRequest {
 	return &models.TransferRequest{
-		Id:        "request-123",
-		Filename:  "hello.txt",
+		Id: "request-123",
+		Filename: "hello.txt",
 		Extension: ".txt",
-		FileSize:  5,
-		Mime:      "text/plain",
-		SenderIp:  "192.0.2.10",
+		FileSize: 5,
+		Mime: "text/plain",
+		SenderIp: "192.0.2.10",
 	}
 }
 
@@ -160,16 +238,9 @@ func TestNewReceiveTransfer(t *testing.T) {
 	t.Parallel()
 
 	stream, _, _ := newReceiveTestStream(nil, nil)
-
-	transfer := newReceiveTransfer(
-		stream,
-		func(event.Event) error {
-			return nil
-		},
-	)
+	transfer := newReceiveTestTransfer(stream)
 
 	require.NotNil(t, transfer)
-
 	assert.Empty(t, transfer.id)
 	assert.Equal(t, receiveInit, transfer.state)
 	assert.NotNil(t, transfer.request)
@@ -180,6 +251,9 @@ func TestNewReceiveTransfer(t *testing.T) {
 	assert.Equal(t, 1, cap(transfer.selectedDestination))
 	assert.False(t, transfer.consumed)
 	assert.NotNil(t, transfer.emitEvent)
+	assert.NotNil(t, transfer.ctx)
+	assert.NotNil(t, transfer.cancel)
+	assert.Equal(t, receiveStateTestTimeout, transfer.approvalWaitTimeoutDur)
 }
 
 func TestReceiveSetID(t *testing.T) {
@@ -532,15 +606,15 @@ func TestReceiveProcessResponse(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
+		name string
 		accepted bool
 	}{
 		{
-			name:     "accepted",
+			name: "accepted",
 			accepted: true,
 		},
 		{
-			name:     "rejected",
+			name: "rejected",
 			accepted: false,
 		},
 	}
@@ -561,9 +635,9 @@ func TestReceiveProcessResponse(t *testing.T) {
 			}
 
 			type responseResult struct {
-				response        *models.TransferResponse
+				response *models.TransferResponse
 				destinationPath string
-				err             error
+				err error
 			}
 
 			resultCh := make(chan responseResult, 1)
@@ -572,9 +646,9 @@ func TestReceiveProcessResponse(t *testing.T) {
 				response, path, err := transfer.processResponse()
 
 				resultCh <- responseResult{
-					response:        response,
+					response: response,
 					destinationPath: path,
-					err:             err,
+					err: err,
 				}
 			}()
 
@@ -630,6 +704,191 @@ func TestReceiveProcessResponse(t *testing.T) {
 		})
 	}
 
+	t.Run("times out while waiting for acceptance", func(t *testing.T) {
+		t.Parallel()
+
+		events := make(chan event.Event, 1)
+		stream, _, _, aborted, getAbortCount := newReceiveTestStreamWithAbort(nil, nil)
+		transfer := newReceiveTestTransferWithContext(
+			stream,
+			func(got event.Event) error {
+				events <- got
+				return nil
+			},
+			context.Background(),
+			func() {},
+			30*time.Millisecond,
+		)
+		transfer.id = "transfer-123"
+		transfer.state = receiveProcessingRequest
+		transfer.request = newValidReceiveRequest()
+
+		type responseResult struct {
+			response        *models.TransferResponse
+			destinationPath string
+			err             error
+		}
+
+		resultCh := make(chan responseResult, 1)
+		go func() {
+			response, path, err := transfer.processResponse()
+			resultCh <- responseResult{
+				response:        response,
+				destinationPath: path,
+				err:             err,
+			}
+		}()
+
+		gotEvent := waitForReceiveEvent(t, events)
+		assert.Equal(t, RequestTransferAcceptanceEvtName, gotEvent.Name())
+
+		var result responseResult
+		select {
+		case result = <-resultCh:
+		case <-time.After(receiveStateTestTimeout):
+			t.Fatal("timed out waiting for approval deadline")
+		}
+
+		require.ErrorIs(t, result.err, context.DeadlineExceeded)
+		assert.Nil(t, result.response)
+		assert.Empty(t, result.destinationPath)
+		waitForReceiveChannel(t, aborted, "stream abort")
+		assert.Equal(t, 1, getAbortCount())
+	})
+
+	t.Run("times out while waiting for destination", func(t *testing.T) {
+		t.Parallel()
+
+		events := make(chan event.Event, 2)
+		stream, _, _, aborted, getAbortCount := newReceiveTestStreamWithAbort(nil, nil)
+		transfer := newReceiveTestTransferWithContext(
+			stream,
+			func(got event.Event) error {
+				events <- got
+				return nil
+			},
+			context.Background(),
+			func() {},
+			30*time.Millisecond,
+		)
+		transfer.id = "transfer-123"
+		transfer.state = receiveProcessingRequest
+		transfer.request = newValidReceiveRequest()
+
+		resultCh := make(chan error, 1)
+		go func() {
+			_, _, err := transfer.processResponse()
+			resultCh <- err
+		}()
+
+		gotEvent := waitForReceiveEvent(t, events)
+		assert.Equal(t, RequestTransferAcceptanceEvtName, gotEvent.Name())
+		transfer.userTransferAcceptanceDecision(true)
+
+		gotEvent = waitForReceiveEvent(t, events)
+		assert.Equal(t, RequestDownloadDestinationEvtName, gotEvent.Name())
+
+		select {
+		case err := <-resultCh:
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+		case <-time.After(receiveStateTestTimeout):
+			t.Fatal("timed out waiting for destination deadline")
+		}
+
+		waitForReceiveChannel(t, aborted, "stream abort")
+		assert.Equal(t, 1, getAbortCount())
+	})
+
+	t.Run("parent cancellation interrupts approval wait", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		events := make(chan event.Event, 1)
+		stream, _, _, aborted, getAbortCount := newReceiveTestStreamWithAbort(nil, nil)
+		transfer := newReceiveTestTransferWithContext(
+			stream,
+			func(got event.Event) error {
+				events <- got
+				return nil
+			},
+			ctx,
+			cancel,
+			time.Second,
+		)
+		transfer.id = "transfer-123"
+		transfer.state = receiveProcessingRequest
+		transfer.request = newValidReceiveRequest()
+
+		resultCh := make(chan error, 1)
+		go func() {
+			_, _, err := transfer.processResponse()
+			resultCh <- err
+		}()
+
+		gotEvent := waitForReceiveEvent(t, events)
+		assert.Equal(t, RequestTransferAcceptanceEvtName, gotEvent.Name())
+		cancel()
+
+		select {
+		case err := <-resultCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(receiveStateTestTimeout):
+			t.Fatal("timed out waiting for parent cancellation")
+		}
+
+		waitForReceiveChannel(t, aborted, "stream abort")
+		assert.Equal(t, 1, getAbortCount())
+	})
+
+	t.Run("parent cancellation interrupts destination wait", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		events := make(chan event.Event, 2)
+		stream, _, _, aborted, getAbortCount := newReceiveTestStreamWithAbort(nil, nil)
+		transfer := newReceiveTestTransferWithContext(
+			stream,
+			func(got event.Event) error {
+				events <- got
+				return nil
+			},
+			ctx,
+			cancel,
+			time.Second,
+		)
+		transfer.id = "transfer-123"
+		transfer.state = receiveProcessingRequest
+		transfer.request = newValidReceiveRequest()
+
+		resultCh := make(chan error, 1)
+		go func() {
+			_, _, err := transfer.processResponse()
+			resultCh <- err
+		}()
+
+		gotEvent := waitForReceiveEvent(t, events)
+		assert.Equal(t, RequestTransferAcceptanceEvtName, gotEvent.Name())
+		transfer.userTransferAcceptanceDecision(true)
+
+		gotEvent = waitForReceiveEvent(t, events)
+		assert.Equal(t, RequestDownloadDestinationEvtName, gotEvent.Name())
+		cancel()
+
+		select {
+		case err := <-resultCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(receiveStateTestTimeout):
+			t.Fatal("timed out waiting for parent cancellation")
+		}
+
+		waitForReceiveChannel(t, aborted, "stream abort")
+		assert.Equal(t, 1, getAbortCount())
+	})
+
 	t.Run("invalid state", func(t *testing.T) {
 		t.Parallel()
 
@@ -644,6 +903,7 @@ func TestReceiveProcessResponse(t *testing.T) {
 	})
 
 	t.Run("acceptance event publishing error", func(t *testing.T) {
+
 		t.Parallel()
 
 		expectedErr := errors.New("event publishing failed")
@@ -720,7 +980,7 @@ func TestReceiveSendResponse(t *testing.T) {
 		transfer := newReceiveTestTransfer(stream)
 		transfer.state = receiveRespond
 		transfer.response = &models.TransferResponse{
-			Id:       "request-123",
+			Id: "request-123",
 			Accepted: true,
 		}
 
@@ -869,7 +1129,7 @@ func TestReceiveRun(t *testing.T) {
 
 		const (
 			transferID = TransferId("transfer-123")
-			fileData   = "hello"
+			fileData = "hello"
 		)
 
 		request := newValidReceiveRequest()
@@ -889,13 +1149,7 @@ func TestReceiveRun(t *testing.T) {
 
 		emitted := make(chan event.Event, 2)
 
-		transfer := newReceiveTransfer(
-			stream,
-			func(got event.Event) error {
-				emitted <- got
-				return nil
-			},
-		)
+		transfer := newReceiveTestTransfer(stream, func(got event.Event) error { emitted <- got; return nil })
 		transfer.setId(transferID)
 
 		resultCh := make(chan TransferResult, 1)
@@ -975,13 +1229,7 @@ func TestReceiveRun(t *testing.T) {
 
 		emitted := make(chan event.Event, 2)
 
-		transfer := newReceiveTransfer(
-			stream,
-			func(got event.Event) error {
-				emitted <- got
-				return nil
-			},
-		)
+		transfer := newReceiveTestTransfer(stream, func(got event.Event) error { emitted <- got; return nil })
 		transfer.setId("transfer-123")
 
 		resultCh := make(chan TransferResult, 1)
@@ -1017,6 +1265,122 @@ func TestReceiveRun(t *testing.T) {
 		require.NoError(t, readMessage(bytes.NewReader(outgoing.Bytes()), response))
 
 		assert.False(t, response.GetAccepted())
+	})
+
+	t.Run("approval timeout aborts and closes stream", func(t *testing.T) {
+		t.Parallel()
+
+		request := newValidReceiveRequest()
+		incoming := newReceiveTestInput(t, request, nil)
+		var outgoing bytes.Buffer
+		stream, closed, closeCount, aborted, getAbortCount := newReceiveTestStreamWithAbort(
+			incoming.Read,
+			outgoing.Write,
+		)
+
+		emitted := make(chan event.Event, 1)
+		transfer := newReceiveTestTransferWithContext(
+			stream,
+			func(got event.Event) error {
+				emitted <- got
+				return nil
+			},
+			context.Background(),
+			func() {},
+			30*time.Millisecond,
+		)
+		transfer.setId("transfer-123")
+
+		resultCh := make(chan TransferResult, 1)
+		go func() {
+			resultCh <- transfer.run()
+		}()
+
+		gotEvent := waitForReceiveEvent(t, emitted)
+		assert.Equal(t, RequestTransferAcceptanceEvtName, gotEvent.Name())
+
+		result := waitForReceiveResult(t, resultCh)
+		waitForReceiveChannel(t, aborted, "stream abort")
+		waitForReceiveChannel(t, closed, "stream close")
+		assertReceiveStreamClosedOnce(t, closeCount)
+
+		receiveResult, ok := result.(*receiveResult)
+		require.True(t, ok)
+		require.ErrorIs(t, receiveResult.Err, context.DeadlineExceeded)
+		assert.Equal(t, receiveError, transfer.state)
+		assert.Equal(t, 1, getAbortCount())
+	})
+
+	t.Run("approval timeout does not apply while receiving file data", func(t *testing.T) {
+		t.Parallel()
+
+		approvalTimeout := 30 * time.Millisecond
+		request := newValidReceiveRequest()
+		incoming := newReceiveTestInput(t, request, nil)
+		blockingReader := &receiveBlockingReader{
+			input:       incoming,
+			readStarted: make(chan struct{}),
+			releaseRead: make(chan struct{}),
+		}
+
+		var outgoing bytes.Buffer
+		stream, closed, closeCount, aborted, getAbortCount := newReceiveTestStreamWithAbort(
+			blockingReader.Read,
+			outgoing.Write,
+		)
+		blockingReader.abortRead = aborted
+
+		emitted := make(chan event.Event, 2)
+		transfer := newReceiveTestTransferWithContext(
+			stream,
+			func(got event.Event) error {
+				emitted <- got
+				return nil
+			},
+			context.Background(),
+			func() {},
+			approvalTimeout,
+		)
+		transfer.setId("transfer-123")
+
+		resultCh := make(chan TransferResult, 1)
+		go func() {
+			resultCh <- transfer.run()
+		}()
+
+		gotEvent := waitForReceiveEvent(t, emitted)
+		assert.Equal(t, RequestTransferAcceptanceEvtName, gotEvent.Name())
+		transfer.userTransferAcceptanceDecision(true)
+
+		gotEvent = waitForReceiveEvent(t, emitted)
+		assert.Equal(t, RequestDownloadDestinationEvtName, gotEvent.Name())
+
+		require.NoError(t, transfer.userDownloadDestinationDecision(
+			filepath.Join(t.TempDir(), "hello.txt"),
+		))
+
+		waitForReceiveChannel(t, blockingReader.readStarted, "file data read")
+
+		select {
+		case result := <-resultCh:
+			require.FailNow(t, "receive completed before blocked read was released", "result: %#v", result)
+		case <-time.After(approvalTimeout * 3):
+		}
+
+		assert.Zero(t, getAbortCount())
+
+		close(blockingReader.releaseRead)
+
+		result := waitForReceiveResult(t, resultCh)
+		waitForReceiveChannel(t, closed, "stream")
+		assertReceiveStreamClosedOnce(t, closeCount)
+
+		receiveResult, ok := result.(*receiveResult)
+		require.True(t, ok)
+		require.NoError(t, receiveResult.Err)
+		assert.True(t, receiveResult.Response.GetAccepted())
+		assert.Equal(t, receiveDone, transfer.state)
+		assert.Zero(t, getAbortCount())
 	})
 
 	t.Run("missing transfer ID", func(t *testing.T) {
@@ -1062,12 +1426,7 @@ func TestReceiveRun(t *testing.T) {
 			nil,
 		)
 
-		transfer := newReceiveTransfer(
-			stream,
-			func(event.Event) error {
-				return expectedErr
-			},
-		)
+		transfer := newReceiveTestTransfer(stream, func(event.Event) error { return expectedErr })
 		transfer.setId("transfer-123")
 
 		result := transfer.run()
@@ -1153,13 +1512,7 @@ func TestReceiveRun(t *testing.T) {
 
 		emitted := make(chan event.Event, 2)
 
-		transfer := newReceiveTransfer(
-			stream,
-			func(got event.Event) error {
-				emitted <- got
-				return nil
-			},
-		)
+		transfer := newReceiveTestTransfer(stream, func(got event.Event) error { emitted <- got; return nil })
 		transfer.setId("transfer-123")
 
 		resultCh := make(chan TransferResult, 1)
@@ -1192,5 +1545,82 @@ func TestReceiveRun(t *testing.T) {
 
 		require.ErrorIs(t, receiveResult.Err, expectedErr)
 		assert.Equal(t, receiveError, transfer.state)
+	})
+	
+	t.Run("parent cancellation interrupts file reception", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		request := newValidReceiveRequest()
+		incoming := newReceiveTestInput(t, request, nil)
+
+		blockingReader := &receiveBlockingReader{
+			input:       incoming,
+			readStarted: make(chan struct{}),
+			releaseRead: make(chan struct{}),
+		}
+
+		var outgoing bytes.Buffer
+
+		stream, closed, closeCount, aborted, getAbortCount :=
+			newReceiveTestStreamWithAbort(
+				blockingReader.Read,
+				outgoing.Write,
+			)
+
+		blockingReader.abortRead = aborted
+
+		emitted := make(chan event.Event, 2)
+
+		transfer := newReceiveTestTransferWithContext(
+			stream,
+			func(got event.Event) error {
+				emitted <- got
+				return nil
+			},
+			ctx,
+			cancel,
+			time.Second,
+		)
+		transfer.setId("transfer-123")
+
+		resultCh := make(chan TransferResult, 1)
+
+		go func() {
+			resultCh <- transfer.run()
+		}()
+
+		gotEvent := waitForReceiveEvent(t, emitted)
+		assert.Equal(t, RequestTransferAcceptanceEvtName, gotEvent.Name())
+
+		transfer.userTransferAcceptanceDecision(true)
+
+		gotEvent = waitForReceiveEvent(t, emitted)
+		assert.Equal(t, RequestDownloadDestinationEvtName, gotEvent.Name())
+
+		destinationPath := filepath.Join(t.TempDir(), "hello.txt")
+
+		require.NoError(t, transfer.userDownloadDestinationDecision(destinationPath))
+
+		waitForReceiveChannel(t, blockingReader.readStarted, "file data read")
+
+		cancel()
+
+		result := waitForReceiveResult(t, resultCh)
+
+		waitForReceiveChannel(t, aborted, "stream abort")
+		waitForReceiveChannel(t, closed, "stream close")
+		assertReceiveStreamClosedOnce(t, closeCount)
+
+		receiveResult, ok := result.(*receiveResult)
+		require.True(t, ok)
+
+		require.ErrorIs(t, receiveResult.Err, context.Canceled)
+		assert.True(t, receiveResult.Response.GetAccepted())
+		assert.Equal(t, destinationPath, receiveResult.DestinationPath)
+		assert.Equal(t, receiveError, transfer.state)
+		assert.Equal(t, 1, getAbortCount())
 	})
 }

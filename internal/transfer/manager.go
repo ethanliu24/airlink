@@ -3,8 +3,8 @@ package transfer
 import (
 	"airlink/internal/event"
 	"airlink/internal/file"
+	"context"
 	"fmt"
-	"io"
 	"net"
 	"sync"
 )
@@ -14,6 +14,8 @@ const idGenRetryTimes = 3
 type Manager struct {
 	transfers map[string]transfer
 	mu        sync.Mutex
+	ctx       context.Context
+	cancel    context.CancelFunc
 
 	addr       net.Addr
 	openReader file.OpenReaderFunc
@@ -21,39 +23,45 @@ type Manager struct {
 	generateID generateIdTransferFunc
 }
 
-func (m *Manager) Send(stream io.ReadWriteCloser, filename string) (TransferId, error) {
+func (m *Manager) Send(stream TransferStream, filename string) (TransferId, error) {
 	reader, err := m.openReader(filename)
 	if err != nil {
 		_ = stream.Close()
 		return "", err
 	}
 
-	transfer := newSendTransfer(reader, stream, m.addr)
+	ctx, cancel := context.WithCancel(m.ctx)
+	transfer := newSendTransfer(ctx, reader, stream, m.addr, transferAcceptTimeoutDuration)
 	id, err := m.register(transfer)
 
 	if err != nil {
+		cancel()
 		_ = reader.Close()
 		_ = stream.Close()
 		return "", err
 	}
 
 	go func() {
+		defer cancel()
 		transfer.run()
 	}()
 
 	return id, nil
 }
 
-func (m *Manager) Receive(stream io.ReadWriteCloser) (TransferId, error) {
-	transfer := newReceiveTransfer(stream, m.emitEvent)
+func (m *Manager) Receive(stream TransferStream) (TransferId, error) {
+	ctx, cancel := context.WithCancel(m.ctx)
+	transfer := newReceiveTransfer(stream, m.emitEvent, ctx, cancel, transferAcceptTimeoutDuration)
 	id, err := m.register(transfer)
 
 	if err != nil {
+		cancel()
 		_ = stream.Close()
 		return "", err
 	}
 
 	go func() {
+		defer cancel()
 		transfer.run()
 	}()
 
@@ -84,8 +92,8 @@ func (m *Manager) register(t transfer) (TransferId, error) {
 
 func (m *Manager) getTransfer(id TransferId) (transfer, bool) {
 	m.mu.Lock()
-    defer m.mu.Unlock()
-	
+	defer m.mu.Unlock()
+
 	transfer, ok := m.transfers[id]
 	return transfer, ok
 }
@@ -123,9 +131,21 @@ func (m *Manager) SubmitDownloadDestination(id TransferId, destination string) e
 	return transfer.userDownloadDestinationDecision(destination)
 }
 
-func NewManager(addr net.Addr, openReader file.OpenReaderFunc, emitEvent event.EmitEventFunc) *Manager {
+func (m *Manager) CleanUp() {
+	m.cancel()
+}
+
+func NewManager(
+	addr net.Addr,
+	openReader file.OpenReaderFunc,
+	emitEvent event.EmitEventFunc,
+	ctx context.Context,
+	cancel context.CancelFunc,
+) *Manager {
 	return &Manager{
 		transfers:  make(map[string]transfer),
+		ctx:        ctx,
+		cancel:     cancel,
 		addr:       addr,
 		openReader: openReader,
 		emitEvent:  emitEvent,

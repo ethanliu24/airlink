@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"io"
 	"sync"
 	"testing"
 	"time"
@@ -22,7 +21,7 @@ func TestNewReceiver(t *testing.T) {
 
 	transport := &quic.Transport{}
 
-	receive := func(io.ReadWriteCloser) (transfer.TransferId, error) {
+	receive := func(transfer.TransferStream) (transfer.TransferId, error) {
 		return "transfer-123", nil
 	}
 
@@ -45,10 +44,10 @@ func TestHandleStream(t *testing.T) {
 
 		stream := &mockStream{}
 
-		received := make(chan io.ReadWriteCloser, 1)
+		received := make(chan transfer.TransferStream, 1)
 
 		receiver := &receiver{
-			receive: func(got io.ReadWriteCloser) (transfer.TransferId, error) {
+			receive: func(got transfer.TransferStream) (transfer.TransferId, error) {
 				received <- got
 				return "transfer-123", nil
 			},
@@ -73,7 +72,7 @@ func TestHandleStream(t *testing.T) {
 		called := false
 
 		receiver := &receiver{
-			receive: func(got io.ReadWriteCloser) (transfer.TransferId, error) {
+			receive: func(got transfer.TransferStream) (transfer.TransferId, error) {
 				assert.Same(t, stream, got)
 				called = true
 				return "", expectedErr
@@ -95,7 +94,7 @@ func TestHandleConnection(t *testing.T) {
 		t.Parallel()
 
 		conn := &mockConn{
-			acceptStreamFunc: func(context.Context) (io.ReadWriteCloser, error) {
+			acceptStreamFunc: func(context.Context) (transfer.TransferStream, error) {
 				return nil, errors.New("connection closed")
 			},
 			closeWithErrFunc: func(
@@ -127,7 +126,7 @@ func TestHandleConnection(t *testing.T) {
 		closeCalled := make(chan struct{})
 
 		conn := &mockConn{
-			acceptStreamFunc: func(context.Context) (io.ReadWriteCloser, error) {
+			acceptStreamFunc: func(context.Context) (transfer.TransferStream, error) {
 				return nil, errors.New("connection closed")
 			},
 			closeWithErrFunc: func(
@@ -167,12 +166,12 @@ func TestHandleConnection(t *testing.T) {
 		t.Parallel()
 
 		stream := &mockStream{}
-		received := make(chan io.ReadWriteCloser, 1)
+		received := make(chan transfer.TransferStream, 1)
 
 		acceptCalls := 0
 
 		conn := &mockConn{
-			acceptStreamFunc: func(context.Context) (io.ReadWriteCloser, error) {
+			acceptStreamFunc: func(context.Context) (transfer.TransferStream, error) {
 				acceptCalls++
 
 				if acceptCalls == 1 {
@@ -191,7 +190,7 @@ func TestHandleConnection(t *testing.T) {
 
 		receiver := &receiver{
 			conns: make(map[Conn]struct{}),
-			receive: func(got io.ReadWriteCloser) (transfer.TransferId, error) {
+			receive: func(got transfer.TransferStream) (transfer.TransferId, error) {
 				received <- got
 				return "transfer-123", nil
 			},
@@ -401,7 +400,7 @@ func TestReceiverReceive(t *testing.T) {
 		var closeOnce sync.Once
 
 		conn := &mockConn{
-			acceptStreamFunc: func(context.Context) (io.ReadWriteCloser, error) {
+			acceptStreamFunc: func(context.Context) (transfer.TransferStream, error) {
 				close(handlerStarted)
 				<-releaseHandler
 				return nil, errors.New("connection closed")

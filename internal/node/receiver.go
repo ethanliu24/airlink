@@ -1,11 +1,11 @@
 package node
 
 import (
+	"airlink/internal/transfer"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"sync"
 
@@ -23,7 +23,7 @@ type receiver struct {
 	mu          sync.Mutex
 }
 
-func (r *receiver) handleStream(stream io.ReadWriteCloser) {
+func (r *receiver) handleStream(stream transfer.TransferStream) {
 	r.receive(stream)
 }
 

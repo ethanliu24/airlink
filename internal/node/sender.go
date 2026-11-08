@@ -1,10 +1,10 @@
 package node
 
 import (
+	"airlink/internal/transfer"
 	"context"
 	"crypto/tls"
 	"errors"
-	"io"
 	"log/slog"
 	"net"
 	"sync"
@@ -23,7 +23,7 @@ type sender struct {
 	send  sendFunc
 }
 
-func (s *sender) sendOverStream(stream io.ReadWriteCloser, filename string) error {
+func (s *sender) sendOverStream(stream transfer.TransferStream, filename string) error {
 	_, err := s.send(stream, filename)
 	if err != nil {
 		return err
@@ -99,6 +99,6 @@ func newSender(transport *quic.Transport, addr net.Addr, send sendFunc) *sender 
 			}, nil
 		},
 		conns: make(map[string]Conn),
-		send: send,
+		send:  send,
 	}
 }

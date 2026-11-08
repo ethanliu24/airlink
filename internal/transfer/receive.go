@@ -3,11 +3,13 @@ package transfer
 import (
 	"airlink/internal/event"
 	"airlink/internal/transfer/models"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type receiveState string
@@ -30,12 +32,17 @@ type receive struct {
 	id        TransferId
 	setIdOnce sync.Once
 
-	state           receiveState
-	request         *models.TransferRequest
-	response        *models.TransferResponse
-	stream          io.ReadWriteCloser
-	destinationPath string
-	consumed        bool
+	state    receiveState
+	request  *models.TransferRequest
+	response *models.TransferResponse
+
+	stream                 TransferStream
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	streamAbortOnce        sync.Once
+	approvalWaitTimeoutDur time.Duration
+	destinationPath        string
+	consumed               bool
 
 	emitEvent              event.EmitEventFunc
 	acceptTransfer         chan bool
@@ -61,9 +68,13 @@ func (r *receive) setId(id TransferId) {
 	r.setIdOnce.Do(func() { r.id = id })
 }
 
-func (r *receive) run() TransferResult {
-	defer r.stream.Close()
+func (r *receive) abortStream() {
+	r.streamAbortOnce.Do(func() {
+		r.stream.Abort()
+	})
+}
 
+func (r *receive) run() TransferResult {
 	var receiveErr error
 
 	if r.getId() == "" {
@@ -76,6 +87,19 @@ func (r *receive) run() TransferResult {
 
 	if !r.consumed {
 		r.consumed = true
+		abortDone := make(chan struct{})
+		stopAbort := context.AfterFunc(r.ctx, func() {
+			defer close(abortDone)
+			r.abortStream()
+		})
+
+		defer func() {
+			if !stopAbort() {
+				<-abortDone
+			}
+
+			_ = r.stream.Close()
+		}()
 	}
 
 outer:
@@ -119,7 +143,12 @@ outer:
 		case receiveReceiving:
 			_, err := r.receiveData()
 			if err != nil {
-				receiveErr = err
+				if ctxErr := r.ctx.Err(); ctxErr != nil {
+					receiveErr = ctxErr
+				} else {
+					receiveErr = err
+				}
+
 				r.state = receiveError
 				continue outer
 			}
@@ -228,14 +257,54 @@ func (r *receive) processResponse() (*models.TransferResponse, string, error) {
 		)
 	}
 
+	approvalCtx, cancel := context.WithTimeout(r.ctx, r.approvalWaitTimeoutDur)
+	defer cancel()
+
+	abortDone := make(chan struct{})
+	stopAbort := context.AfterFunc(approvalCtx, func() {
+		defer close(abortDone)
+		r.stream.Abort()
+	})
+
+	abortStopped := false
+	stopAbortAndWait := func() error {
+		if !abortStopped {
+			abortStopped = true
+
+			if !stopAbort() {
+				<-abortDone
+			}
+		}
+
+		return approvalCtx.Err()
+	}
+
+	defer stopAbortAndWait()
+
+	if err := approvalCtx.Err(); err != nil {
+		return nil, "", fmt.Errorf("waiting for transfer approval: %w", err)
+	}
+
 	err := r.requestUserTransferAcceptance(r.getId())
 	if err != nil {
 		return nil, "", err
 	}
 
-	accepted := <-r.acceptTransfer
+	var accepted bool
+	select {
+	case accepted = <-r.acceptTransfer:
+	case <-approvalCtx.Done():
+		return nil, "", fmt.Errorf(
+			"waiting for transfer acceptance: %w",
+			approvalCtx.Err(),
+		)
+	}
 
 	if !accepted {
+		if err := stopAbortAndWait(); err != nil {
+			return nil, "", fmt.Errorf("waiting for transfer acceptance: %w", err)
+		}
+
 		return &models.TransferResponse{
 			Id:           r.request.Id,
 			Accepted:     false,
@@ -248,7 +317,19 @@ func (r *receive) processResponse() (*models.TransferResponse, string, error) {
 		return nil, "", err
 	}
 
-	destination := <-r.selectedDestination
+	var destination string
+	select {
+	case destination = <-r.selectedDestination:
+	case <-approvalCtx.Done():
+		return nil, "", fmt.Errorf(
+			"waiting for download destination: %w",
+			approvalCtx.Err(),
+		)
+	}
+
+	if err := stopAbortAndWait(); err != nil {
+		return nil, "", fmt.Errorf("waiting for download destination: %w", err)
+	}
 
 	return &models.TransferResponse{
 		Id:           r.request.Id,
@@ -305,15 +386,24 @@ func (r *receive) receiveData() (int, error) {
 	return totalBytesRead, nil
 }
 
-func newReceiveTransfer(stream io.ReadWriteCloser, emitEvent event.EmitEventFunc) *receive {
+func newReceiveTransfer(
+	stream TransferStream,
+	emitEvent event.EmitEventFunc,
+	ctx context.Context,
+	cancel context.CancelFunc,
+	approvalWaitTimeoutDur time.Duration,
+) *receive {
 	return &receive{
-		id:                  "",
-		state:               receiveInit,
-		request:             &models.TransferRequest{},
-		stream:              stream,
-		consumed:            false,
-		acceptTransfer:      make(chan bool, 1),
-		selectedDestination: make(chan string, 1),
-		emitEvent:           emitEvent,
+		id:                     "",
+		state:                  receiveInit,
+		request:                &models.TransferRequest{},
+		ctx:                    ctx,
+		cancel:                 cancel,
+		approvalWaitTimeoutDur: approvalWaitTimeoutDur,
+		stream:                 stream,
+		consumed:               false,
+		acceptTransfer:         make(chan bool, 1),
+		selectedDestination:    make(chan string, 1),
+		emitEvent:              emitEvent,
 	}
 }

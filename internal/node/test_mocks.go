@@ -1,6 +1,7 @@
 package node
 
 import (
+	"airlink/internal/transfer"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -9,7 +10,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	"io"
 	"math/big"
 	"net"
 	"time"
@@ -70,6 +70,7 @@ type mockStream struct {
 	writeFunc func([]byte) (int, error)
 	readFunc  func([]byte) (int, error)
 	closeFunc func() error
+	abortFunc func()
 }
 
 func (s *mockStream) Read(data []byte) (int, error) {
@@ -84,17 +85,21 @@ func (s *mockStream) Close() error {
 	return s.closeFunc()
 }
 
+func (s *mockStream) Abort() {
+	s.abortFunc()
+}
+
 type mockConn struct {
-	acceptStreamFunc func(context.Context) (io.ReadWriteCloser, error)
-	openStreamFunc   func() (io.ReadWriteCloser, error)
+	acceptStreamFunc func(context.Context) (transfer.TransferStream, error)
+	openStreamFunc   func() (transfer.TransferStream, error)
 	closeWithErrFunc func(quic.ApplicationErrorCode, string) error
 }
 
-func (c *mockConn) AcceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
+func (c *mockConn) AcceptStream(ctx context.Context) (transfer.TransferStream, error) {
 	return c.acceptStreamFunc(ctx)
 }
 
-func (c *mockConn) OpenStream() (io.ReadWriteCloser, error) {
+func (c *mockConn) OpenStream() (transfer.TransferStream, error) {
 	return c.openStreamFunc()
 }
 

@@ -1,18 +1,22 @@
 package node
 
 import (
+	"airlink/internal/transfer"
 	"context"
-	"io"
 
 	"github.com/quic-go/quic-go"
 )
 
+const (
+	StreamSuccess    quic.StreamErrorCode = 0
+	StreamCancelCode quic.StreamErrorCode = 1
+)
 
 type quicConn struct {
 	conn *quic.Conn
 }
 
-func (c *quicConn) AcceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
+func (c *quicConn) AcceptStream(ctx context.Context) (transfer.TransferStream, error) {
 	stream, err := c.conn.AcceptStream(ctx)
 	if err != nil {
 		return nil, err
@@ -21,7 +25,7 @@ func (c *quicConn) AcceptStream(ctx context.Context) (io.ReadWriteCloser, error)
 	return &quicStream{stream: stream}, nil
 }
 
-func (c *quicConn) OpenStream() (io.ReadWriteCloser, error) {
+func (c *quicConn) OpenStream() (transfer.TransferStream, error) {
 	stream, err := c.conn.OpenStream()
 	if err != nil {
 		return nil, err
@@ -50,6 +54,11 @@ func (s *quicStream) Close() error {
 	return s.stream.Close()
 }
 
+func (s *quicStream) Abort() {
+	s.stream.CancelRead(StreamCancelCode)
+	s.stream.CancelWrite(StreamCancelCode)
+}
+
 type quicListener struct {
 	listener *quic.Listener
 }
@@ -63,6 +72,6 @@ func (l *quicListener) Accept(ctx context.Context) (Conn, error) {
 	return &quicConn{conn: conn}, nil
 }
 
-func(l *quicListener) Close() error {
+func (l *quicListener) Close() error {
 	return l.listener.Close()
 }

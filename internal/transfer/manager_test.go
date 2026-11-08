@@ -1,4 +1,3 @@
-
 package transfer
 
 import (
@@ -6,6 +5,7 @@ import (
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"path/filepath"
@@ -64,8 +64,8 @@ func TestManagerRegister(t *testing.T) {
 			expectedErr:   errors.New("ID generation failed"),
 		},
 		{
-			name:         "exhausted retries",
-			existingIDs:  []string{"existing-id"},
+			name:        "exhausted retries",
+			existingIDs: []string{"existing-id"},
 			generatedIDs: []string{
 				"existing-id",
 				"existing-id",
@@ -218,6 +218,7 @@ func TestManagerSend(t *testing.T) {
 
 		manager := &Manager{
 			transfers: make(map[string]transfer),
+			ctx:       context.Background(),
 			addr:      testAddr(),
 			openReader: func(gotFilename string) (file.Reader, error) {
 				assert.Equal(t, filename, gotFilename)
@@ -233,7 +234,6 @@ func TestManagerSend(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, id, string(gotID))
 
-		// Verify transfer registration.
 		manager.mu.Lock()
 		registeredTransfer, exists := manager.transfers[id]
 		manager.mu.Unlock()
@@ -243,14 +243,12 @@ func TestManagerSend(t *testing.T) {
 		_, isSend := registeredTransfer.(*send)
 		assert.True(t, isSend)
 
-		// Wait for asynchronous transfer completion.
 		waitForManagerChannel(t, readerClosed, "reader")
 		waitForManagerChannel(t, streamClosed, "stream")
 
 		assert.EqualValues(t, 1, readerCloseCount.Load())
 		assert.EqualValues(t, 1, streamCloseCount.Load())
 
-		// Verify request and file data.
 		out := bytes.NewReader(written.Bytes())
 		request := &models.TransferRequest{}
 
@@ -289,6 +287,7 @@ func TestManagerSend(t *testing.T) {
 
 		manager := &Manager{
 			transfers: make(map[string]transfer),
+			ctx:       context.Background(),
 			openReader: func(string) (file.Reader, error) {
 				return nil, expectedErr
 			},
@@ -352,6 +351,7 @@ func TestManagerSend(t *testing.T) {
 
 		manager := &Manager{
 			transfers: make(map[string]transfer),
+			ctx:       context.Background(),
 			openReader: func(string) (file.Reader, error) {
 				return reader, nil
 			},
@@ -415,6 +415,7 @@ func TestManagerReceive(t *testing.T) {
 
 		manager := &Manager{
 			transfers: make(map[string]transfer),
+			ctx:       context.Background(),
 			generateID: func() (string, error) {
 				return id, nil
 			},
@@ -425,7 +426,6 @@ func TestManagerReceive(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, TransferId(id), gotID)
 
-		// Verify registration.
 		manager.mu.Lock()
 		registeredTransfer, exists := manager.transfers[id]
 		manager.mu.Unlock()
@@ -435,11 +435,7 @@ func TestManagerReceive(t *testing.T) {
 		_, isReceive := registeredTransfer.(*receive)
 		assert.True(t, isReceive)
 
-		// Verify that the transfer started.
 		waitForManagerChannel(t, readStarted, "transfer read")
-
-		// The mock read fails, so the transfer should terminate
-		// and close its stream.
 		waitForManagerChannel(t, streamClosed, "stream")
 
 		assert.EqualValues(t, 1, streamCloseCount.Load())
@@ -477,6 +473,7 @@ func TestManagerReceive(t *testing.T) {
 
 		manager := &Manager{
 			transfers: make(map[string]transfer),
+			ctx:       context.Background(),
 			generateID: func() (string, error) {
 				return "", expectedErr
 			},
@@ -500,6 +497,8 @@ func TestManagerReceive(t *testing.T) {
 
 func TestNewManager(t *testing.T) {
 	mockAddr := testAddr()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	mgr := NewManager(
 		mockAddr,
@@ -507,15 +506,42 @@ func TestNewManager(t *testing.T) {
 		func(e event.Event) error {
 			return nil
 		},
+		ctx,
+		cancel,
 	)
 
 	require.NotNil(t, mgr)
 	assert.NotNil(t, mgr.transfers)
 	assert.Empty(t, mgr.transfers)
 	assert.Equal(t, mockAddr, mgr.addr)
+	assert.Same(t, ctx, mgr.ctx)
+	assert.NotNil(t, mgr.cancel)
 	assert.NotNil(t, mgr.openReader)
 	assert.NotNil(t, mgr.emitEvent)
 	assert.NotNil(t, mgr.generateID)
+}
+
+func TestManagerCleanUp(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	manager := NewManager(
+		testAddr(),
+		newMockReader,
+		func(event.Event) error { return nil },
+		ctx,
+		cancel,
+	)
+
+	manager.CleanUp()
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("manager cleanup did not cancel its context")
+	}
+
+	assert.ErrorIs(t, ctx.Err(), context.Canceled)
 }
 
 func TestGetTransfer(t *testing.T) {
@@ -575,9 +601,8 @@ func TestSubmitTransferAcceptDecision(t *testing.T) {
 		require.True(t, ok)
 		assert.True(t, accepted)
 
-		// Verify the channel was closed after the decision.
 		_, ok = <-receiveTransfer.acceptTransfer
-		assert.False(t, ok)
+		assert.False(t, ok, "acceptance channel should be closed")
 	})
 
 	t.Run("submits rejection decision", func(t *testing.T) {
@@ -653,10 +678,6 @@ func TestSubmitTransferAcceptDecision(t *testing.T) {
 		assert.False(t, accepted)
 	})
 }
-
-// -----------------------------------------------------------------------------
-// Download destination submission
-// -----------------------------------------------------------------------------
 
 func TestSubmitDownloadDestination(t *testing.T) {
 	t.Parallel()
