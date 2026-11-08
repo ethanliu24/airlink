@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"io"
 	"net"
 	"sync"
 	"testing"
@@ -33,7 +32,7 @@ func TestNewSender(t *testing.T) {
 
 	transport := &quic.Transport{}
 
-	send := func(io.ReadWriteCloser, string) (transfer.TransferId, error) {
+	send := func(transfer.TransferStream, string) (transfer.TransferId, error) {
 		return "transfer-123", nil
 	}
 
@@ -65,9 +64,9 @@ func TestSend(t *testing.T) {
 		var sendCalled bool
 
 		sender := &sender{
-			dial:       mockDialErr,
-			conns:      make(map[string]Conn),
-			send: func(io.ReadWriteCloser, string) (transfer.TransferId, error) {
+			dial:  mockDialErr,
+			conns: make(map[string]Conn),
+			send: func(transfer.TransferStream, string) (transfer.TransferId, error) {
 				sendCalled = true
 				return "", nil
 			},
@@ -97,13 +96,13 @@ func TestSend(t *testing.T) {
 		stream := &mockStream{}
 
 		expectedConn := &mockConn{
-			openStreamFunc: func() (io.ReadWriteCloser, error) {
+			openStreamFunc: func() (transfer.TransferStream, error) {
 				return stream, nil
 			},
 		}
 
 		type sendCall struct {
-			stream   io.ReadWriteCloser
+			stream   transfer.TransferStream
 			filename string
 		}
 
@@ -119,7 +118,7 @@ func TestSend(t *testing.T) {
 				return expectedConn, nil
 			},
 			conns: make(map[string]Conn),
-			send: func(gotStream io.ReadWriteCloser, gotFilename string) (transfer.TransferId, error) {
+			send: func(gotStream transfer.TransferStream, gotFilename string) (transfer.TransferId, error) {
 				sendCalled <- sendCall{
 					stream:   gotStream,
 					filename: gotFilename,
@@ -166,7 +165,7 @@ func TestSend(t *testing.T) {
 		var sendMu sync.Mutex
 
 		conn := &mockConn{
-			openStreamFunc: func() (io.ReadWriteCloser, error) {
+			openStreamFunc: func() (transfer.TransferStream, error) {
 				close(openAttempted)
 				return nil, expectedErr
 			},
@@ -182,7 +181,7 @@ func TestSend(t *testing.T) {
 				return conn, nil
 			},
 			conns: make(map[string]Conn),
-			send: func(io.ReadWriteCloser, string) (transfer.TransferId, error) {
+			send: func(transfer.TransferStream, string) (transfer.TransferId, error) {
 				sendMu.Lock()
 				sendCalled = true
 				sendMu.Unlock()
@@ -225,13 +224,13 @@ func TestSendOverStream(t *testing.T) {
 		const filename = "test.txt"
 
 		var (
-			called          bool
-			gotStream       io.ReadWriteCloser
-			gotFilename     string
+			called      bool
+			gotStream   transfer.TransferStream
+			gotFilename string
 		)
 
 		sender := &sender{
-			send: func(stream io.ReadWriteCloser, filename string) (transfer.TransferId, error) {
+			send: func(stream transfer.TransferStream, filename string) (transfer.TransferId, error) {
 				called = true
 				gotStream = stream
 				gotFilename = filename
@@ -254,7 +253,7 @@ func TestSendOverStream(t *testing.T) {
 		expectedErr := errors.New("manager send failed")
 
 		sender := &sender{
-			send: func(io.ReadWriteCloser, string) (transfer.TransferId, error) {
+			send: func(transfer.TransferStream, string) (transfer.TransferId, error) {
 				return "", expectedErr
 			},
 		}

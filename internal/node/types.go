@@ -4,15 +4,14 @@ import (
 	"airlink/internal/transfer"
 	"context"
 	"crypto/tls"
-	"io"
 	"net"
 
 	"github.com/quic-go/quic-go"
 )
 
 type Conn interface {
-	AcceptStream(context.Context) (io.ReadWriteCloser, error)
-	OpenStream() (io.ReadWriteCloser, error)
+	AcceptStream(context.Context) (transfer.TransferStream, error)
+	OpenStream() (transfer.TransferStream, error)
 	CloseWithError(quic.ApplicationErrorCode, string) error
 }
 
@@ -25,6 +24,6 @@ type dialFunc func(context.Context, net.Addr, *tls.Config, *quic.Config) (Conn, 
 
 type listenFunc func(*tls.Config, *quic.Config) (Listener, error)
 
-type sendFunc func(stream io.ReadWriteCloser, filename string) (transfer.TransferId, error)
+type sendFunc func(stream transfer.TransferStream, filename string) (transfer.TransferId, error)
 
-type receiveFunc func(stream io.ReadWriteCloser) (transfer.TransferId, error)
+type receiveFunc func(stream transfer.TransferStream) (transfer.TransferId, error)

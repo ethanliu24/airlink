@@ -3,12 +3,14 @@ package transfer
 import (
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
+	"context"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -35,13 +37,18 @@ type send struct {
 	id        TransferId
 	setIdOnce sync.Once
 
-	state      sendState
-	request    *models.TransferRequest
-	response   *models.TransferResponse
-	reader     file.Reader
-	stream     io.ReadWriteCloser
-	senderAddr net.Addr
-	consumed   bool
+	state    sendState
+	request  *models.TransferRequest
+	response *models.TransferResponse
+
+	reader          file.Reader
+	stream          TransferStream
+	streamAbortOnce sync.Once
+	ctx             context.Context
+
+	senderAddr           net.Addr
+	acceptWaitTimeoutDur time.Duration
+	consumed             bool
 }
 
 type sendResult struct {
@@ -57,23 +64,45 @@ func (s *send) getId() TransferId {
 }
 
 func (s *send) setId(id TransferId) {
-	s.setIdOnce.Do(func () { s.id = id })
+	s.setIdOnce.Do(func() { s.id = id })
+}
+
+func (s *send) abortStream() {
+    s.streamAbortOnce.Do(func() {
+        s.stream.Abort()
+    })
 }
 
 func (s *send) run() TransferResult {
-	defer s.reader.Close()
-	defer s.stream.Close()
-
 	var accepted bool
 	var rejectReason *string
 	var sendErr error
 
-	if s.consumed {
+	if s.getId() == "" {
+		sendErr = fmt.Errorf("transfer send cannot start, id not set - call setId(id) to set")
+		s.state = sendError
+	} else if s.consumed {
 		sendErr = fmt.Errorf("<run> already called on a send")
 		s.state = sendError
 	}
 
-	s.consumed = true
+	if !s.consumed {
+		s.consumed = true
+		abortDone := make(chan struct{})
+		stopAbort := context.AfterFunc(s.ctx, func() {
+			defer close(abortDone)
+			s.abortStream()
+		})
+
+		defer func() {
+			if !stopAbort() {
+				<-abortDone
+			}
+
+			_ = s.reader.Close()
+			_ = s.stream.Close()
+		}()
+	}
 
 outer:
 	for {
@@ -116,7 +145,12 @@ outer:
 		case sendSending:
 			err := s.sendData()
 			if err != nil {
-				sendErr = err
+				if ctxErr := s.ctx.Err(); ctxErr != nil {
+					sendErr = ctxErr
+				} else {
+					sendErr = err
+				}
+
 				s.state = sendError
 				continue outer
 			}
@@ -232,12 +266,26 @@ func (s *send) recieveTransferResponse() error {
 		return fmt.Errorf("send response not initialized in recieveTransferResponse")
 	}
 
+	approvalCtx, cancel := context.WithTimeout(s.ctx, s.acceptWaitTimeoutDur)
+	defer cancel()
+
+	abortDone := make(chan struct{})
+	stopAbort := context.AfterFunc(approvalCtx, func() {
+		defer close(abortDone)
+		s.stream.Abort()
+	})
+
 	err := readMessage(s.stream, s.response)
-	if err != nil {
-		return err
+
+	if !stopAbort() {
+		<-abortDone
 	}
 
-	return nil
+	if approvalCtx.Err() != nil {
+		return fmt.Errorf("waiting for transfer approval: %w", approvalCtx.Err())
+	}
+
+	return err
 }
 
 func (s *send) sendData() error {
@@ -260,13 +308,21 @@ func (s *send) sendData() error {
 }
 
 // Assume caller will handle opening and closing the file and stream
-func newSendTransfer(reader file.Reader, stream io.ReadWriteCloser, senderAddr net.Addr) *send {
+func newSendTransfer(
+	ctx context.Context,
+	reader file.Reader,
+	stream TransferStream,
+	senderAddr net.Addr,
+	acceptWaitTimeoutDur time.Duration,
+) *send {
 	return &send{
-		state:      sendInit,
-		response:   &models.TransferResponse{},
-		reader:     reader,
-		stream:     stream,
-		senderAddr: senderAddr,
-		consumed:   false,
+		state:                sendInit,
+		response:             &models.TransferResponse{},
+		reader:               reader,
+		stream:               stream,
+		ctx:                  ctx,
+		senderAddr:           senderAddr,
+		acceptWaitTimeoutDur: acceptWaitTimeoutDur,
+		consumed:             false,
 	}
 }

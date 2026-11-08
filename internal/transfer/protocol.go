@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
@@ -11,16 +12,22 @@ import (
 
 // Send protobuf schema data in format [ 4 byte header, length of data ][ data ]
 const (
-	msgHeaderLengthBytes  = 4
-	maxMessageLengthBytes = 8 * 1024
-	writeOperation        = "transfer protocol write"
-	readOperation         = "transfer protocol read"
-	senderName            = "Bob"     // TODO handle this more properly
-	clientName            = "airlink" // TODO handle this more properly
-	clientVersion         = "0.0.1"   // TODO handle this more properly
+	msgHeaderLengthBytes          = 4
+	maxMessageLengthBytes         = 8 * 1024
+	transferAcceptTimeoutDuration = 5 * time.Minute
+	writeOperation                = "transfer protocol write"
+	readOperation                 = "transfer protocol read"
+	senderName                    = "Bob"     // TODO handle this more properly
+	clientName                    = "airlink" // TODO handle this more properly
+	clientVersion                 = "0.0.1"   // TODO handle this more properly
 )
 
 type TransferId = string
+
+type TransferStream interface {
+	io.ReadWriteCloser
+	Abort()
+}
 
 type TransferResult interface {
 	isTransferResult()
@@ -30,6 +37,7 @@ type transfer interface {
 	getId() TransferId
 	setId(TransferId)
 	run() TransferResult
+	abortStream()
 }
 
 type generateIdTransferFunc func() (TransferId, error)

@@ -4,6 +4,7 @@ import (
 	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer"
+	"context"
 	"crypto/tls"
 	"log/slog"
 	"net"
@@ -49,6 +50,7 @@ func (n *P2PNode) RegisterEventHandler(handler event.EventHandlerFunc) error {
 
 func (n *P2PNode) Cleanup() {
 	n.eventManager.CleanUp()
+	n.transferManager.CleanUp()
 	n.receiver.Cleanup()
 	n.sender.Cleanup()
 	n.transport.Close()
@@ -81,10 +83,11 @@ func newP2PNode(
 
 	tlsConfig := generateTLSConfig()
 	quicConfig := getQuicConfig()
+	ctx, cancel := context.WithCancel(context.Background())
 
 	transport := &quic.Transport{Conn: udpConn}
 	eventManager := event.NewManager()
-	transferManager := transfer.NewManager(addr, openReader, eventManager.EmitEvent)
+	transferManager := transfer.NewManager(addr, openReader, eventManager.EmitEvent, ctx, cancel)
 	receiver := newReceiver(transport, transferManager.Receive)
 	sender := newSender(transport, addr, transferManager.Send)
 
