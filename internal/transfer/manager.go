@@ -51,7 +51,15 @@ func (m *Manager) Send(stream TransferStream, filename string) (TransferId, erro
 
 func (m *Manager) Receive(stream TransferStream) (TransferId, error) {
 	ctx, cancel := context.WithCancel(m.ctx)
-	transfer := newReceiveTransfer(stream, m.emitEvent, ctx, cancel, transferAcceptTimeoutDuration)
+	transfer := newReceiveTransfer(
+		stream,
+		file.OpenWriter,
+		m.emitEvent,
+		ctx,
+		cancel,
+		transferAcceptTimeoutDuration,
+	)
+	
 	id, err := m.register(transfer)
 
 	if err != nil {

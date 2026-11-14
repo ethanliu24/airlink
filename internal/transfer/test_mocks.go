@@ -1,4 +1,3 @@
-
 package transfer
 
 import (
@@ -119,5 +118,33 @@ func newMockReader(data string) (file.Reader, error) {
 	return &mockReader{
 		data:    data,
 		pointer: 0,
+	}, nil
+}
+
+type mockWriter struct {
+	data string
+	path string
+}
+
+func (w *mockWriter) Write(p []byte) (int, error) {
+	w.data += string(p)
+	return len(p), nil
+}
+
+func (w *mockWriter) Close() error {
+	return nil
+}
+
+func (w *mockWriter) Commit() error {
+	return nil
+}
+
+func (w *mockWriter) Abort() error {
+	return nil
+}
+
+func newMockWriter(path string) (file.Writer, error) {
+	return &mockWriter{
+		path: path,
 	}, nil
 }

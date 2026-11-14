@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"airlink/internal/event"
+	"airlink/internal/file"
 	"airlink/internal/transfer/models"
 	"context"
 	"errors"
@@ -36,6 +37,7 @@ type receive struct {
 	request  *models.TransferRequest
 	response *models.TransferResponse
 
+	openWriter             file.OpenWriterFunc
 	stream                 TransferStream
 	ctx                    context.Context
 	cancel                 context.CancelFunc
@@ -366,30 +368,45 @@ func (r *receive) receiveData() (int, error) {
 		)
 	}
 
+	writer, err := r.openWriter(r.destinationPath)
+	if err != nil {
+		return 0, err
+	}
+
 	totalBytesRead := 0
+	totalBytesWrote := 0
 	buf := make([]byte, receiveBufferSizeBytes)
 
 	for {
-		n, err := r.stream.Read(buf)
-		totalBytesRead += n
+		bytesRead, readErr := r.stream.Read(buf)
+		totalBytesRead += bytesRead
 
-		// TODO stream the file in destination
-		fmt.Printf("received in %s: %s", r.destinationPath, string(buf[:n]))
+		var writeErr error
+		if bytesRead > 0 {
+			bytesWrote, wErr := writer.Write(buf[:bytesRead])
+			totalBytesWrote += bytesWrote
+			writeErr = wErr
+		}
 
-		if errors.Is(err, io.EOF) {
+		if errors.Is(readErr, io.EOF) {
 			break
 		}
 
-		if err != nil {
-			return totalBytesRead, err
+		if writeErr != nil {
+			return totalBytesWrote, writeErr
+		}
+
+		if readErr != nil {
+			return totalBytesWrote, readErr
 		}
 	}
 
-	return totalBytesRead, nil
+	return totalBytesWrote, nil
 }
 
 func newReceiveTransfer(
 	stream TransferStream,
+	openWriter file.OpenWriterFunc,
 	emitEvent event.EmitEventFunc,
 	ctx context.Context,
 	cancel context.CancelFunc,
@@ -402,6 +419,7 @@ func newReceiveTransfer(
 		ctx:                    ctx,
 		cancel:                 cancel,
 		approvalWaitTimeoutDur: approvalWaitTimeoutDur,
+		openWriter:             openWriter,
 		stream:                 stream,
 		consumed:               false,
 		acceptTransfer:         make(chan bool, 1),

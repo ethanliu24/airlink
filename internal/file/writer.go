@@ -44,7 +44,7 @@ func (fw *FileWriter) Abort() error {
 	return nil
 }
 
-type OpenWriterFunc func(path string) error
+type OpenWriterFunc func(path string) (Writer, error)
 
 // TODO write to a staging file in tmp/ before actually saving it
 // TODO add modes for dup handling: ask (default), replace/override, rename, cancel

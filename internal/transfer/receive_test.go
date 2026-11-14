@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"airlink/internal/event"
+	"airlink/internal/file"
 	"airlink/internal/transfer/models"
 
 	"bytes"
@@ -153,6 +154,7 @@ func newReceiveTestTransfer(
 
 	return newReceiveTransfer(
 		stream,
+		newMockWriter,
 		emitEvent,
 		context.Background(),
 		func() {},
@@ -167,7 +169,7 @@ func newReceiveTestTransferWithContext(
 	cancel context.CancelFunc,
 	timeout time.Duration,
 ) *receive {
-	return newReceiveTransfer(stream, emitEvent, ctx, cancel, timeout)
+	return newReceiveTransfer(stream, file.OpenWriter, emitEvent, ctx, cancel, timeout)
 }
 
 func newValidReceiveRequest() *models.TransferRequest {
@@ -1083,6 +1085,32 @@ func TestReceiveData(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Equal(t, len(data), n)
+	})
+
+	t.Run("writes data using writer", func(t *testing.T) {
+		t.Parallel()
+
+		data := "hello world"
+		incoming := bytes.NewReader([]byte(data))
+
+		stream, _, _ := newReceiveTestStream(incoming.Read, nil)
+
+		transfer := newReceiveTestTransfer(stream)
+		transfer.state = receiveReceiving
+
+		writer, err := newMockWriter("test/")
+		transfer.openWriter = func(path string) (file.Writer, error) {
+			return writer, err
+		}
+
+		require.NoError(t, err)
+		n, err := transfer.receiveData()
+		require.NoError(t, err)
+
+		mw, ok := writer.(*mockWriter)
+		require.True(t, ok)
+		assert.Equal(t, len(mw.data), n)
+		assert.Equal(t, string(mw.data), data)
 	})
 
 	t.Run("invalid state", func(t *testing.T) {
