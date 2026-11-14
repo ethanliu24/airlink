@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
 	"context"
@@ -46,6 +47,7 @@ type send struct {
 	streamAbortOnce sync.Once
 	ctx             context.Context
 
+	emitEvent            event.EmitEventFunc
 	senderAddr           net.Addr
 	acceptWaitTimeoutDur time.Duration
 	consumed             bool
@@ -68,9 +70,9 @@ func (s *send) setId(id TransferId) {
 }
 
 func (s *send) abortStream() {
-    s.streamAbortOnce.Do(func() {
-        s.stream.Abort()
-    })
+	s.streamAbortOnce.Do(func() {
+		s.stream.Abort()
+	})
 }
 
 func (s *send) run() TransferResult {
@@ -91,6 +93,7 @@ func (s *send) run() TransferResult {
 		abortDone := make(chan struct{})
 		stopAbort := context.AfterFunc(s.ctx, func() {
 			defer close(abortDone)
+			emitTimeoutEvent(s.emitEvent, s.id, "sender timed out")
 			s.abortStream()
 		})
 
@@ -272,6 +275,7 @@ func (s *send) recieveTransferResponse() error {
 	abortDone := make(chan struct{})
 	stopAbort := context.AfterFunc(approvalCtx, func() {
 		defer close(abortDone)
+		emitTimeoutEvent(s.emitEvent, s.id, "sender timed out - did not receive response")
 		s.stream.Abort()
 	})
 
@@ -313,6 +317,7 @@ func newSendTransfer(
 	reader file.Reader,
 	stream TransferStream,
 	senderAddr net.Addr,
+	emitEvent event.EmitEventFunc,
 	acceptWaitTimeoutDur time.Duration,
 ) *send {
 	return &send{
@@ -321,6 +326,7 @@ func newSendTransfer(
 		reader:               reader,
 		stream:               stream,
 		ctx:                  ctx,
+		emitEvent:            emitEvent,
 		senderAddr:           senderAddr,
 		acceptWaitTimeoutDur: acceptWaitTimeoutDur,
 		consumed:             false,

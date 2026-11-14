@@ -1,10 +1,10 @@
-
 package transfer
 
 import (
+	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
-	
+
 	"bytes"
 	"context"
 	"errors"
@@ -332,6 +332,10 @@ func sendTestAddr() net.Addr {
 }
 
 func newTestSender(reader file.Reader) *send {
+	emitEvent := event.EmitEventFunc(func(event.Event) error {
+		return nil
+	})
+
 	stream, _ := newSendTestStream()
 
 	return newSendTransfer(
@@ -339,6 +343,7 @@ func newTestSender(reader file.Reader) *send {
 		reader,
 		stream,
 		sendTestAddr(),
+		emitEvent,
 		testAcceptWaitTimeout,
 	)
 }
@@ -349,11 +354,16 @@ func newTestSenderWithStream(
 	stream TransferStream,
 	timeout time.Duration,
 ) *send {
+	emitEvent := event.EmitEventFunc(func(event.Event) error {
+		return nil
+	})
+
 	return newSendTransfer(
 		ctx,
 		reader,
 		stream,
 		sendTestAddr(),
+		emitEvent,
 		timeout,
 	)
 }
@@ -559,6 +569,9 @@ func TestInitRequest(t *testing.T) {
 	t.Run("rejects invalid sender address", func(t *testing.T) {
 		t.Parallel()
 
+		emitEvent := event.EmitEventFunc(func(event.Event) error {
+			return nil
+		})
 		reader := newSendTestReader("picture.png", []byte("data"))
 		invalidAddr := &net.IPAddr{
 			IP: net.ParseIP("192.0.2.10"),
@@ -570,6 +583,7 @@ func TestInitRequest(t *testing.T) {
 			reader,
 			stream,
 			invalidAddr,
+			emitEvent,
 			testAcceptWaitTimeout,
 		)
 
@@ -751,7 +765,7 @@ func TestRecieveTransferResponse(t *testing.T) {
 		require.ErrorIs(t, err, expectedErr)
 	})
 
-	t.Run("aborts stream when approval times out", func(t *testing.T) {
+	t.Run("aborts stream and emits an event when approval times out", func(t *testing.T) {
 		t.Parallel()
 
 		stream, state := newSendTestStream()
@@ -766,6 +780,12 @@ func TestRecieveTransferResponse(t *testing.T) {
 		)
 		sender.state = sendWaitingResponse
 
+		eventCh := make(chan event.Event, 1)
+		sender.emitEvent = func(e event.Event) error {
+			eventCh <- e
+			return nil
+		}
+
 		errCh := make(chan error, 1)
 		go func() {
 			errCh <- sender.recieveTransferResponse()
@@ -774,13 +794,19 @@ func TestRecieveTransferResponse(t *testing.T) {
 		awaitSendTestSignal(t, state.readStarted)
 
 		var err error
-		select {
-		case err = <-errCh:
-		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for approval timeout")
+		var evt event.Event
+		for range 2 {
+			select {
+			case err = <-errCh:
+			case evt = <-eventCh:
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for approval timeout")
+			}
 		}
 
 		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.NotNil(t, evt)
+		require.Equal(t, TransferTimedOutEvtName, evt.Name())
 
 		_, abortCalls, _, _ := state.stats()
 		assert.Equal(t, 1, abortCalls)

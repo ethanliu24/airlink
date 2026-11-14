@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"airlink/internal/event"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -49,6 +50,21 @@ func generateTransferId() (TransferId, error) {
 	}
 
 	return uuid.String(), nil
+}
+
+func emitTimeoutEvent(emitCb event.EmitEventFunc, transferId TransferId, message string) error {
+	payload := &TransferTimedOutPayload{TransferId: transferId, Message: message}
+	event, err := event.NewEvent(TransferTimedOutEvtName, payload)
+	if err != nil {
+		return err
+	}
+
+	err = emitCb(event)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func messageIsNilError(operation string) error {

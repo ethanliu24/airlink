@@ -31,7 +31,7 @@ func (m *Manager) Send(stream TransferStream, filename string) (TransferId, erro
 	}
 
 	ctx, cancel := context.WithCancel(m.ctx)
-	transfer := newSendTransfer(ctx, reader, stream, m.addr, transferAcceptTimeoutDuration)
+	transfer := newSendTransfer(ctx, reader, stream, m.addr, m.emitEvent, transferAcceptTimeoutDuration)
 	id, err := m.register(transfer)
 
 	if err != nil {
