@@ -48,6 +48,7 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 			printToTerminal("Accept Transfer? [y/n] ")
 			if scanner.Scan() {
 				input := strings.TrimSpace(scanner.Text())
+				printToTerminal("Enter destination: ")
 
 				accepted := false
 				switch strings.ToLower(input) {
@@ -67,6 +68,8 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 			printToTerminal("Enter destination: ")
 			if scanner.Scan() {
 				input := strings.TrimSpace(scanner.Text())
+				printToTerminal("Enter destination: ")
+
 				destination, err := filepath.Abs(input)
 				if err != nil {
 					return err
@@ -77,6 +80,9 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 					return err
 				}
 			}
+		case transfer.TransferTimedOutEvtName:
+			payload := e.Payload().(*transfer.TransferTimedOutPayload)
+			printToTerminal("Transfer timed out - message: %s, id: %s\n", payload.Message, payload.TransferId)
 		default:
 			return fmt.Errorf("unrecognized event name for node: %s", e.Name())
 		}
@@ -87,7 +93,7 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 
 func startSender(node *node.P2PNode, receiverPort int, receiverAddr *net.UDPAddr) {
 	for {
-		printToTerminal("Enter data to send to port %d: ", receiverPort)
+		printToTerminal("Enter path to send to port %d: ", receiverPort)
 		reader := bufio.NewReader(os.Stdin)
 		input, _ := reader.ReadString('\n')
 		userInput := strings.TrimSpace(input)
@@ -111,7 +117,8 @@ func startReceiver() {
 // Run the commands in two terminals:
 // go run cmd/test/main.go --sender=true
 // go run cmd/test/main.go --sender=false > tmp/listener.txt
-// destination copy: tmp/destination.txt
+// source: cmd/test/file.txt
+// destination: tmp/destination.txt
 func main() {
 	isSender := flag.Bool("sender", false, "whether the node focuses on listening or sending")
 
