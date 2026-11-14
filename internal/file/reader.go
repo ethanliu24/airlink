@@ -1,12 +1,9 @@
 package file
 
 import (
-	"errors"
 	"io"
 	"os"
 )
-
-var FileIsNullError = errors.New("file pointer is null - Open() must be called first")
 
 const BYTES_TO_READ int = 1024 * 4
 
