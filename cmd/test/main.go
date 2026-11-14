@@ -48,7 +48,6 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 			printToTerminal("Accept Transfer? [y/n] ")
 			if scanner.Scan() {
 				input := strings.TrimSpace(scanner.Text())
-				printToTerminal("Enter destination: ")
 
 				accepted := false
 				switch strings.ToLower(input) {
@@ -68,7 +67,6 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 			printToTerminal("Enter destination: ")
 			if scanner.Scan() {
 				input := strings.TrimSpace(scanner.Text())
-				printToTerminal("Enter destination: ")
 
 				destination, err := filepath.Abs(input)
 				if err != nil {
