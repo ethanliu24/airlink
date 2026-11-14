@@ -90,6 +90,7 @@ func (r *receive) run() TransferResult {
 		abortDone := make(chan struct{})
 		stopAbort := context.AfterFunc(r.ctx, func() {
 			defer close(abortDone)
+			emitTimeoutEvent(r.emitEvent, r.id, "receive timed out")
 			r.abortStream()
 		})
 
@@ -263,6 +264,7 @@ func (r *receive) processResponse() (*models.TransferResponse, string, error) {
 	abortDone := make(chan struct{})
 	stopAbort := context.AfterFunc(approvalCtx, func() {
 		defer close(abortDone)
+		emitTimeoutEvent(r.emitEvent, r.id, "receive timed out - did not get acceptance response")
 		r.stream.Abort()
 	})
 

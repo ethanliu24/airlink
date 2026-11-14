@@ -704,7 +704,7 @@ func TestReceiveProcessResponse(t *testing.T) {
 		})
 	}
 
-	t.Run("times out while waiting for acceptance", func(t *testing.T) {
+	t.Run("times out and emits an event while waiting for acceptance", func(t *testing.T) {
 		t.Parallel()
 
 		events := make(chan event.Event, 1)
@@ -722,6 +722,17 @@ func TestReceiveProcessResponse(t *testing.T) {
 		transfer.id = "transfer-123"
 		transfer.state = receiveProcessingRequest
 		transfer.request = newValidReceiveRequest()
+
+		eventCh := make(chan event.Event, 1)
+		originalEmitEvent := transfer.emitEvent
+		transfer.emitEvent = func(e event.Event) error {
+			for len(eventCh) > 0 {
+				<-eventCh
+			}
+
+			eventCh <- e
+			return originalEmitEvent(e)
+		}
 
 		type responseResult struct {
 			response        *models.TransferResponse
@@ -742,6 +753,9 @@ func TestReceiveProcessResponse(t *testing.T) {
 		gotEvent := waitForReceiveEvent(t, events)
 		assert.Equal(t, RequestTransferAcceptanceEvtName, gotEvent.Name())
 
+		gotEvent = waitForReceiveEvent(t, events)
+		assert.Equal(t, TransferTimedOutEvtName, gotEvent.Name())
+
 		var result responseResult
 		select {
 		case result = <-resultCh:
@@ -756,7 +770,7 @@ func TestReceiveProcessResponse(t *testing.T) {
 		assert.Equal(t, 1, getAbortCount())
 	})
 
-	t.Run("times out while waiting for destination", func(t *testing.T) {
+	t.Run("times out and emits event while waiting for destination", func(t *testing.T) {
 		t.Parallel()
 
 		events := make(chan event.Event, 2)
@@ -775,6 +789,17 @@ func TestReceiveProcessResponse(t *testing.T) {
 		transfer.state = receiveProcessingRequest
 		transfer.request = newValidReceiveRequest()
 
+		eventCh := make(chan event.Event, 1)
+		originalEmitEvent := transfer.emitEvent
+		transfer.emitEvent = func(e event.Event) error {
+			for len(eventCh) > 0 {
+				<-eventCh
+			}
+
+			eventCh <- e
+			return originalEmitEvent(e)
+		}
+
 		resultCh := make(chan error, 1)
 		go func() {
 			_, _, err := transfer.processResponse()
@@ -788,13 +813,17 @@ func TestReceiveProcessResponse(t *testing.T) {
 		gotEvent = waitForReceiveEvent(t, events)
 		assert.Equal(t, RequestDownloadDestinationEvtName, gotEvent.Name())
 
+		gotEvent = waitForReceiveEvent(t, events)
+		require.Equal(t, TransferTimedOutEvtName, gotEvent.Name())
+
+		var err error
 		select {
-		case err := <-resultCh:
-			require.ErrorIs(t, err, context.DeadlineExceeded)
+		case err = <-resultCh:
 		case <-time.After(receiveStateTestTimeout):
-			t.Fatal("timed out waiting for destination deadline")
+			t.Fatal("timed out waiting for approval deadline")
 		}
 
+		require.ErrorIs(t, err, context.DeadlineExceeded)
 		waitForReceiveChannel(t, aborted, "stream abort")
 		assert.Equal(t, 1, getAbortCount())
 	})
@@ -1546,7 +1575,7 @@ func TestReceiveRun(t *testing.T) {
 		require.ErrorIs(t, receiveResult.Err, expectedErr)
 		assert.Equal(t, receiveError, transfer.state)
 	})
-	
+
 	t.Run("parent cancellation interrupts file reception", func(t *testing.T) {
 		t.Parallel()
 
