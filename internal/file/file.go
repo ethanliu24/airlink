@@ -25,6 +25,19 @@ func validateRegularFile(file *os.File) error {
 	return nil
 }
 
+func validateRegularFileStr(path string) error {
+	info, err := os.Stat(path)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("destination is not a regular file")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	return nil
+}
+
 func mkdirAllTracked(path string, perm os.FileMode) ([]string, error) {
 	path = filepath.Clean(path)
 
