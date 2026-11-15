@@ -1,8 +1,10 @@
+
 package file
 
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,13 +13,13 @@ import (
 
 func TestFileWriterWrite(t *testing.T) {
 	t.Run("writes data successfully", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "test.txt")
+		path := filepath.Join(t.TempDir(), "staging.tmp")
 
 		f, err := os.Create(path)
 		require.NoError(t, err)
 
 		writer := &FileWriter{
-			file: f,
+			stagingFile: f,
 		}
 
 		data := []byte("hello world")
@@ -34,7 +36,7 @@ func TestFileWriterWrite(t *testing.T) {
 		assert.Equal(t, data, got)
 	})
 
-	t.Run("returns error when file is nil", func(t *testing.T) {
+	t.Run("returns error when staging file is nil", func(t *testing.T) {
 		writer := &FileWriter{}
 
 		n, err := writer.Write([]byte("hello"))
@@ -43,15 +45,15 @@ func TestFileWriterWrite(t *testing.T) {
 		assert.Zero(t, n)
 	})
 
-	t.Run("returns error when file is closed", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "test.txt")
+	t.Run("returns error when staging file is closed", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "staging.tmp")
 
 		f, err := os.Create(path)
 		require.NoError(t, err)
 		require.NoError(t, f.Close())
 
 		writer := &FileWriter{
-			file: f,
+			stagingFile: f,
 		}
 
 		n, err := writer.Write([]byte("hello"))
@@ -62,14 +64,14 @@ func TestFileWriterWrite(t *testing.T) {
 }
 
 func TestFileWriterClose(t *testing.T) {
-	t.Run("closes file successfully", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "test.txt")
+	t.Run("closes staging file successfully", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "staging.tmp")
 
 		f, err := os.Create(path)
 		require.NoError(t, err)
 
 		writer := &FileWriter{
-			file: f,
+			stagingFile: f,
 		}
 
 		err = writer.Close()
@@ -80,7 +82,7 @@ func TestFileWriterClose(t *testing.T) {
 		assert.ErrorIs(t, err, os.ErrClosed)
 	})
 
-	t.Run("returns error when file is nil", func(t *testing.T) {
+	t.Run("returns error when staging file is nil", func(t *testing.T) {
 		writer := &FileWriter{}
 
 		err := writer.Close()
@@ -89,18 +91,69 @@ func TestFileWriterClose(t *testing.T) {
 	})
 }
 
-func TestOpenWriterIntegration(t *testing.T) {
-	t.Run("returns usable FileWriter", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "nested", "test.txt")
+func TestGenerateStagingCanonicalPath(t *testing.T) {
+	t.Run("generates staging path in destination directory", func(t *testing.T) {
+		destination := filepath.Join(t.TempDir(), "hello.txt")
 
-		writer, err := OpenWriter(path)
+		stagingPath, err := generateStagingCanonicalPath(destination)
+
+		require.NoError(t, err)
+
+		assert.Equal(t, filepath.Dir(destination), filepath.Dir(stagingPath))
+		assert.NotEqual(t, destination, stagingPath)
+		assert.True(t, strings.HasPrefix(
+			filepath.Base(stagingPath),
+			"hello-staging-",
+		))
+	})
+
+	t.Run("generates unique paths", func(t *testing.T) {
+		destination := filepath.Join(t.TempDir(), "hello.txt")
+
+		first, err := generateStagingCanonicalPath(destination)
+		require.NoError(t, err)
+
+		second, err := generateStagingCanonicalPath(destination)
+		require.NoError(t, err)
+
+		assert.NotEqual(t, first, second)
+	})
+
+	t.Run("handles destination without extension", func(t *testing.T) {
+		destination := filepath.Join(t.TempDir(), "README")
+
+		stagingPath, err := generateStagingCanonicalPath(destination)
+
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(
+			filepath.Base(stagingPath),
+			"README-staging-",
+		))
+	})
+}
+
+func TestOpenWriter(t *testing.T) {
+	t.Run("creates staging file and missing parent directories", func(t *testing.T) {
+		root := t.TempDir()
+		destination := filepath.Join(root, "nested", "deeper", "hello.txt")
+
+		writer, err := OpenWriter(destination)
 
 		require.NoError(t, err)
 		require.NotNil(t, writer)
 
 		fileWriter, ok := writer.(*FileWriter)
 		require.True(t, ok)
-		require.NotNil(t, fileWriter.file)
+		require.NotNil(t, fileWriter.stagingFile)
+
+		stagingPath := fileWriter.stagingFile.Name()
+		expectedDir, err := filepath.EvalSymlinks(filepath.Dir(destination))
+
+		require.NoError(t, err)
+		assert.Equal(t, expectedDir, filepath.Dir(writer.(*FileWriter).stagingFile.Name()))
+		assert.NotEqual(t, destination, stagingPath)
+		assert.FileExists(t, stagingPath)
+		assert.NoFileExists(t, destination)
 
 		data := []byte("hello world")
 
@@ -110,51 +163,78 @@ func TestOpenWriterIntegration(t *testing.T) {
 
 		require.NoError(t, writer.Close())
 
-		got, err := os.ReadFile(path)
+		got, err := os.ReadFile(stagingPath)
 		require.NoError(t, err)
 		assert.Equal(t, data, got)
+
+		assert.NoFileExists(t, destination)
+		assert.DirExists(t, filepath.Dir(destination))
+
+		require.NoError(t, os.Remove(stagingPath))
 	})
 
-	t.Run("returns duplicate error for existing file", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "test.txt")
+	t.Run("creates staging file when destination already exists", func(t *testing.T) {
+		root := t.TempDir()
+		destination := filepath.Join(root, "hello.txt")
 		original := []byte("existing contents")
 
-		require.NoError(t, os.WriteFile(path, original, 0644))
+		require.NoError(t, os.WriteFile(destination, original, 0644))
 
-		writer, err := OpenWriter(path)
+		writer, err := OpenWriter(destination)
 
-		require.ErrorIs(t, err, DuplicateFileFound)
-		assert.Nil(t, writer)
+		require.NoError(t, err)
+		require.NotNil(t, writer)
 
-		got, err := os.ReadFile(path)
+		fileWriter, ok := writer.(*FileWriter)
+		require.True(t, ok)
+
+		stagingPath := fileWriter.stagingFile.Name()
+
+		assert.NotEqual(t, destination, stagingPath)
+		assert.FileExists(t, stagingPath)
+
+		data := []byte("new contents")
+
+		n, err := writer.Write(data)
+		require.NoError(t, err)
+		assert.Equal(t, len(data), n)
+
+		require.NoError(t, writer.Close())
+
+		got, err := os.ReadFile(destination)
 		require.NoError(t, err)
 		assert.Equal(t, original, got)
+
+		stagedData, err := os.ReadFile(stagingPath)
+		require.NoError(t, err)
+		assert.Equal(t, data, stagedData)
+
+		require.NoError(t, os.Remove(stagingPath))
 	})
 
 	t.Run("returns error when destination is a directory", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "test")
-		require.NoError(t, os.Mkdir(path, 0755))
+		destination := filepath.Join(t.TempDir(), "target")
+		require.NoError(t, os.Mkdir(destination, 0755))
 
-		writer, err := OpenWriter(path)
+		writer, err := OpenWriter(destination)
 
 		require.Error(t, err)
 		assert.Nil(t, writer)
-		assert.DirExists(t, path)
+		assert.DirExists(t, destination)
 	})
-}
 
-func TestFileWriterCommit(t *testing.T) {
-	t.Run("placeholder returns nil", func(t *testing.T) {
-		writer := &FileWriter{}
+	t.Run("returns error when parent path is a file", func(t *testing.T) {
+		root := t.TempDir()
+		parent := filepath.Join(root, "file.txt")
 
-		assert.NoError(t, writer.Commit())
-	})
-}
+		require.NoError(t, os.WriteFile(parent, []byte("test"), 0644))
 
-func TestFileWriterAbort(t *testing.T) {
-	t.Run("placeholder returns nil", func(t *testing.T) {
-		writer := &FileWriter{}
+		destination := filepath.Join(parent, "nested", "hello.txt")
 
-		assert.NoError(t, writer.Abort())
+		writer, err := OpenWriter(destination)
+
+		require.Error(t, err)
+		assert.Nil(t, writer)
+		assert.FileExists(t, parent)
 	})
 }
