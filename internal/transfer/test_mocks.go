@@ -135,7 +135,7 @@ func (w *mockWriter) Close() error {
 	return nil
 }
 
-func (w *mockWriter) Commit() error {
+func (w *mockWriter) Commit(mode file.WriterCommitMode) error {
 	return nil
 }
 

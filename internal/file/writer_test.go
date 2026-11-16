@@ -91,6 +91,112 @@ func TestFileWriterClose(t *testing.T) {
 	})
 }
 
+func TestFileWriterCommit(t *testing.T) {
+	t.Run("publishes staging file when destination does not exist", func(t *testing.T) {
+		destination := filepath.Join(t.TempDir(), "hello.txt")
+
+		writer, err := OpenWriter(destination)
+		require.NoError(t, err)
+
+		fileWriter := writer.(*FileWriter)
+		stagingPath := fileWriter.stagingPath
+		data := []byte("hello world")
+
+		n, err := writer.Write(data)
+		require.NoError(t, err)
+		assert.Equal(t, len(data), n)
+
+		require.NoError(t, writer.Close())
+		require.NoError(t, writer.Commit(WriteCommitRaise))
+
+		got, err := os.ReadFile(destination)
+		require.NoError(t, err)
+		assert.Equal(t, data, got)
+
+		assert.NoFileExists(t, stagingPath)
+	})
+
+	t.Run("returns duplicate error when destination already exists", func(t *testing.T) {
+		root := t.TempDir()
+		destination := filepath.Join(root, "hello.txt")
+		original := []byte("existing contents")
+
+		require.NoError(t, os.WriteFile(destination, original, 0644))
+
+		writer, err := OpenWriter(destination)
+		require.NoError(t, err)
+
+		fileWriter := writer.(*FileWriter)
+		stagingPath := fileWriter.stagingPath
+		data := []byte("new contents")
+
+		n, err := writer.Write(data)
+		require.NoError(t, err)
+		assert.Equal(t, len(data), n)
+
+		require.NoError(t, writer.Close())
+
+		err = writer.Commit(WriteCommitRaise)
+		require.ErrorIs(t, err, DuplicateFileFound)
+
+		got, err := os.ReadFile(destination)
+		require.NoError(t, err)
+		assert.Equal(t, original, got)
+
+		stagedData, err := os.ReadFile(stagingPath)
+		require.NoError(t, err)
+		assert.Equal(t, data, stagedData)
+	})
+
+	t.Run("replaces existing destination when requested", func(t *testing.T) {
+		root := t.TempDir()
+		destination := filepath.Join(root, "hello.txt")
+		original := []byte("existing contents")
+
+		require.NoError(t, os.WriteFile(destination, original, 0644))
+
+		writer, err := OpenWriter(destination)
+		require.NoError(t, err)
+
+		fileWriter := writer.(*FileWriter)
+		stagingPath := fileWriter.stagingPath
+		data := []byte("new contents")
+
+		n, err := writer.Write(data)
+		require.NoError(t, err)
+		assert.Equal(t, len(data), n)
+
+		require.NoError(t, writer.Close())
+		require.NoError(t, writer.Commit(WriteCommitReplace))
+
+		got, err := os.ReadFile(destination)
+		require.NoError(t, err)
+		assert.Equal(t, data, got)
+
+		assert.NoFileExists(t, stagingPath)
+	})
+
+	t.Run("returns error when commit mode is unrecognized", func(t *testing.T) {
+		destination := filepath.Join(t.TempDir(), "hello.txt")
+
+		writer, err := OpenWriter(destination)
+		require.NoError(t, err)
+
+		fileWriter := writer.(*FileWriter)
+		stagingPath := fileWriter.stagingPath
+
+		_, err = writer.Write([]byte("hello world"))
+		require.NoError(t, err)
+		require.NoError(t, writer.Close())
+
+		err = writer.Commit(WriterCommitMode("invalid"))
+		require.Error(t, err)
+
+		assert.NoFileExists(t, destination)
+		assert.FileExists(t, stagingPath)
+	})
+}
+
 func TestGenerateStagingCanonicalPath(t *testing.T) {
 	t.Run("generates staging path in destination directory", func(t *testing.T) {
 		destination := filepath.Join(t.TempDir(), "hello.txt")
