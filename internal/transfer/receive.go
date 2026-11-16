@@ -373,7 +373,12 @@ func (r *receive) receiveData() (int, error) {
 		return 0, err
 	}
 
-	defer writer.Close()
+	committed := false
+	defer func() {
+		if !committed {
+			writer.Abort()
+		}
+	}()
 
 	totalBytesRead := 0
 	totalBytesWrote := 0
@@ -403,7 +408,14 @@ func (r *receive) receiveData() (int, error) {
 		}
 	}
 
+	err = writer.Close()
+	if err != nil {
+		return totalBytesWrote, err
+	}
+
 	writer.Commit(file.WriteCommitRaise)
+	committed = true
+
 	return totalBytesWrote, nil
 }
 

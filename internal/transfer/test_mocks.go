@@ -122,29 +122,40 @@ func newMockReader(data string) (file.Reader, error) {
 }
 
 type mockWriter struct {
-	data string
-	path string
+    data       string
+    path       string
+    calls      []string
+    writeErr   error
+    commitMode file.WriterCommitMode
 }
 
 func (w *mockWriter) Write(p []byte) (int, error) {
-	w.data += string(p)
-	return len(p), nil
+    if w.writeErr != nil {
+        return 0, w.writeErr
+    }
+
+    w.data += string(p)
+    return len(p), nil
 }
 
 func (w *mockWriter) Close() error {
-	return nil
+    w.calls = append(w.calls, "close")
+    return nil
 }
 
 func (w *mockWriter) Commit(mode file.WriterCommitMode) error {
-	return nil
+    w.calls = append(w.calls, "commit")
+    w.commitMode = mode
+    return nil
 }
 
 func (w *mockWriter) Abort() error {
-	return nil
+    w.calls = append(w.calls, "abort")
+    return nil
 }
 
 func newMockWriter(path string) (file.Writer, error) {
-	return &mockWriter{
-		path: path,
-	}, nil
+    return &mockWriter{
+        path: path,
+    }, nil
 }
