@@ -373,6 +373,8 @@ func (r *receive) receiveData() (int, error) {
 		return 0, err
 	}
 
+	defer writer.Close()
+
 	totalBytesRead := 0
 	totalBytesWrote := 0
 	buf := make([]byte, receiveBufferSizeBytes)
@@ -401,6 +403,7 @@ func (r *receive) receiveData() (int, error) {
 		}
 	}
 
+	writer.Commit(file.WriteCommitRaise)
 	return totalBytesWrote, nil
 }
 
