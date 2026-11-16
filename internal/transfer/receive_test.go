@@ -1176,6 +1176,92 @@ func TestReceiveData(t *testing.T) {
 		require.ErrorIs(t, err, expectedErr)
 		assert.Equal(t, 5, n)
 	})
+
+	t.Run("commits writer after receiving data", func(t *testing.T) {
+		t.Parallel()
+
+		data := "hello world"
+		incoming := bytes.NewReader([]byte(data))
+
+		stream, _, _ := newReceiveTestStream(incoming.Read, nil)
+
+		transfer := newReceiveTestTransfer(stream)
+		transfer.state = receiveReceiving
+
+		writer, err := newMockWriter("test/")
+		require.NoError(t, err)
+
+		mw := writer.(*mockWriter)
+		transfer.openWriter = func(path string) (file.Writer, error) {
+			return writer, nil
+		}
+
+		n, err := transfer.receiveData()
+
+		require.NoError(t, err)
+		assert.Equal(t, len(data), n)
+		assert.Equal(t, data, mw.data)
+		assert.Equal(t, []string{"close", "commit"}, mw.calls)
+		assert.Equal(t, file.WriteCommitRaise, mw.commitMode)
+	})
+
+	t.Run("aborts writer when stream read fails", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("stream read failed")
+
+		stream, _, _ := newReceiveTestStream(
+			func([]byte) (int, error) {
+				return 0, expectedErr
+			},
+			nil,
+		)
+
+		transfer := newReceiveTestTransfer(stream)
+		transfer.state = receiveReceiving
+
+		writer, err := newMockWriter("test/")
+		require.NoError(t, err)
+
+		mw := writer.(*mockWriter)
+		transfer.openWriter = func(path string) (file.Writer, error) {
+			return writer, nil
+		}
+
+		n, err := transfer.receiveData()
+
+		require.ErrorIs(t, err, expectedErr)
+		assert.Zero(t, n)
+		assert.Equal(t, []string{"abort"}, mw.calls)
+	})
+
+	t.Run("aborts writer when write fails", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("writer write failed")
+		incoming := bytes.NewReader([]byte("hello"))
+
+		stream, _, _ := newReceiveTestStream(incoming.Read, nil)
+
+		transfer := newReceiveTestTransfer(stream)
+		transfer.state = receiveReceiving
+
+		writer, err := newMockWriter("test/")
+		require.NoError(t, err)
+
+		mw := writer.(*mockWriter)
+		mw.writeErr = expectedErr
+
+		transfer.openWriter = func(path string) (file.Writer, error) {
+			return writer, nil
+		}
+
+		n, err := transfer.receiveData()
+
+		require.ErrorIs(t, err, expectedErr)
+		assert.Zero(t, n)
+		assert.Equal(t, []string{"abort"}, mw.calls)
+	})
 }
 
 func TestReceiveRun(t *testing.T) {

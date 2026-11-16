@@ -89,7 +89,7 @@ func mkdirAllTracked(path string, perm os.FileMode) ([]string, error) {
 }
 
 func removeCreatedDirs(dirs []string) {
-	for i := len(dirs) - 1; i >= 0; i-- {
-		_ = os.Remove(dirs[i])
+	for _, dir := range slices.Backward(dirs) {
+		_ = os.Remove(dir) // only removes empty dirs
 	}
 }

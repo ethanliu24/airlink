@@ -91,7 +91,24 @@ func (fw *FileWriter) Commit(mode WriterCommitMode) error {
 }
 
 func (fw *FileWriter) Abort() error {
-	return nil
+	var abortErr error
+
+	if fw.stagingFile != nil {
+		if err := fw.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			abortErr = errors.Join(abortErr, err)
+		}
+	}
+
+	if fw.stagingPath != "" {
+		if err := os.Remove(fw.stagingPath); err != nil &&
+			!errors.Is(err, os.ErrNotExist) {
+			abortErr = errors.Join(abortErr, err)
+		}
+	}
+
+	removeCreatedDirs(fw.createdDirs)
+
+	return abortErr
 }
 
 func generateStagingCanonicalPath(destination string) (string, error) {
@@ -120,6 +137,10 @@ func OpenWriter(path string) (Writer, error) {
 		return nil, err
 	}
 
+	if canonicalPath == "" {
+		return nil, fmt.Errorf("writer canonical path is empty")
+	}
+
 	err = validateRegularFileStr(canonicalPath)
 	if err != nil {
 		return nil, err
@@ -141,6 +162,10 @@ func OpenWriter(path string) (Writer, error) {
 	stagingCanonicalPath, err := generateStagingCanonicalPath(canonicalPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if stagingCanonicalPath == "" {
+		return nil, fmt.Errorf("writer staging canonical path is empty")
 	}
 
 	stagingFile, err := os.OpenFile(

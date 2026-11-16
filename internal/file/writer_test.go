@@ -197,6 +197,79 @@ func TestFileWriterCommit(t *testing.T) {
 	})
 }
 
+func TestFileWriterAbort(t *testing.T) {
+	t.Run("closes and removes staging file", func(t *testing.T) {
+		root := t.TempDir()
+		destination := filepath.Join(root, "nested", "deeper", "hello.txt")
+
+		writer, err := OpenWriter(destination)
+		require.NoError(t, err)
+
+		fileWriter := writer.(*FileWriter)
+		stagingPath := fileWriter.stagingPath
+
+		_, err = writer.Write([]byte("hello world"))
+		require.NoError(t, err)
+
+		require.FileExists(t, stagingPath)
+
+		require.NoError(t, writer.Abort())
+
+		assert.NoFileExists(t, stagingPath)
+		assert.NoFileExists(t, destination)
+		assert.NoDirExists(t, filepath.Join(root, "nested"))
+
+		// The staging file handle should also be closed.
+		_, err = writer.Write([]byte("more data"))
+		assert.ErrorIs(t, err, os.ErrClosed)
+	})
+
+	t.Run("does not remove existing destination", func(t *testing.T) {
+		root := t.TempDir()
+		destination := filepath.Join(root, "hello.txt")
+		original := []byte("existing contents")
+
+		require.NoError(t, os.WriteFile(destination, original, 0644))
+
+		writer, err := OpenWriter(destination)
+		require.NoError(t, err)
+
+		fileWriter := writer.(*FileWriter)
+		stagingPath := fileWriter.stagingPath
+
+		_, err = writer.Write([]byte("new contents"))
+		require.NoError(t, err)
+
+		require.NoError(t, writer.Close())
+		require.NoError(t, writer.Abort())
+
+		assert.NoFileExists(t, stagingPath)
+
+		got, err := os.ReadFile(destination)
+		require.NoError(t, err)
+		assert.Equal(t, original, got)
+	})
+
+	t.Run("can abort repeatedly", func(t *testing.T) {
+		destination := filepath.Join(t.TempDir(), "hello.txt")
+
+		writer, err := OpenWriter(destination)
+		require.NoError(t, err)
+
+		fileWriter := writer.(*FileWriter)
+		stagingPath := fileWriter.stagingPath
+
+		_, err = writer.Write([]byte("hello world"))
+		require.NoError(t, err)
+
+		require.NoError(t, writer.Abort())
+		require.NoError(t, writer.Abort())
+
+		assert.NoFileExists(t, stagingPath)
+		assert.NoFileExists(t, destination)
+	})
+}
+
 func TestGenerateStagingCanonicalPath(t *testing.T) {
 	t.Run("generates staging path in destination directory", func(t *testing.T) {
 		destination := filepath.Join(t.TempDir(), "hello.txt")
