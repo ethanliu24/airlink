@@ -1152,6 +1152,7 @@ func TestReceiveData(t *testing.T) {
 
 		transfer := newReceiveTestTransfer(stream)
 		transfer.state = receiveReceiving
+		transfer.request = &models.TransferRequest{FileSize: 5}
 
 		n, err := transfer.receiveData()
 
@@ -1180,6 +1181,7 @@ func TestReceiveData(t *testing.T) {
 
 		transfer := newReceiveTestTransfer(stream)
 		transfer.state = receiveReceiving
+		transfer.request = &models.TransferRequest{FileSize: 5}
 
 		n, err := transfer.receiveData()
 
@@ -1232,6 +1234,7 @@ func TestReceiveData(t *testing.T) {
 
 		transfer := newReceiveTestTransfer(stream)
 		transfer.state = receiveReceiving
+		transfer.request = &models.TransferRequest{FileSize: 5}
 
 		writer, err := newMockWriter("test/")
 		require.NoError(t, err)
@@ -1258,6 +1261,7 @@ func TestReceiveData(t *testing.T) {
 
 		transfer := newReceiveTestTransfer(stream)
 		transfer.state = receiveReceiving
+		transfer.request = &models.TransferRequest{FileSize: 5}
 
 		writer, err := newMockWriter("test/")
 		require.NoError(t, err)
@@ -1440,6 +1444,30 @@ func TestReceiveData(t *testing.T) {
 
 		assert.Equal(t, len(data), n)
 		assert.Equal(t, data, writer.data)
+		assert.Equal(t, []string{"abort"}, writer.calls)
+	})
+
+	t.Run("rejects data larger than the advertised file size before writing", func(t *testing.T) {
+		t.Parallel()
+
+		data := "hello world"
+		incoming := bytes.NewReader([]byte(data))
+		stream, _, _ := newReceiveTestStream(incoming.Read, nil)
+		transfer := newReceiveTestTransfer(stream)
+		transfer.state = receiveReceiving
+		transfer.request = &models.TransferRequest{FileSize: 5}
+
+		writer := &mockWriter{}
+		transfer.openWriter = func(string) (file.Writer, error) {
+			return writer, nil
+		}
+
+		n, err := transfer.receiveData()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "file size exceeded")
+		assert.Equal(t, 0, n)
+		assert.Empty(t, writer.data)
 		assert.Equal(t, []string{"abort"}, writer.calls)
 	})
 

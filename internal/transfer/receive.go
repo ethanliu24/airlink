@@ -415,6 +415,13 @@ func (r *receive) receiveData() (int, error) {
 	for {
 		bytesRead, readErr := r.stream.Read(buf)
 		totalBytesRead += bytesRead
+		if uint64(totalBytesRead) > r.request.FileSize {
+			return totalBytesWrote, fmt.Errorf(
+				"file size exceeded: expected at most %d bytes, received %d",
+				r.request.FileSize,
+				totalBytesRead,
+			)
+		}
 
 		var writeErr error
 		if bytesRead > 0 {
