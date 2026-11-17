@@ -59,7 +59,7 @@ func (m *Manager) Receive(stream TransferStream) (TransferId, error) {
 		cancel,
 		transferAcceptTimeoutDuration,
 	)
-	
+
 	id, err := m.register(transfer)
 
 	if err != nil {
@@ -137,6 +137,16 @@ func (m *Manager) SubmitDownloadDestination(id TransferId, destination string) e
 	}
 
 	return transfer.userDownloadDestinationDecision(destination)
+}
+
+func (m *Manager) SubmitDuplicatedDestinationHandling(id TransferId, mode file.WriterCommitMode) error {
+	transfer, err := m.getReceiveTransfer(id, "SubmitDuplicatedDestinationHandling")
+	if err != nil {
+		return err
+	}
+
+	transfer.duplicatedFileHandlingDecision(mode)
+	return nil
 }
 
 func (m *Manager) CleanUp() {
