@@ -387,7 +387,7 @@ func (r *receive) duplicatedFileHandlingDecision(mode file.WriterCommitMode) {
 	})
 }
 
-func (r *receive) receiveData() (int, error) {
+func (r *receive) receiveData() (totalBytes int, receiveErr error) {
 	if r.state != receiveReceiving {
 		return 0, fmt.Errorf(
 			"receive state is not %s in receiveData, got: %s",
@@ -404,7 +404,9 @@ func (r *receive) receiveData() (int, error) {
 	committed := false
 	defer func() {
 		if !committed {
-			writer.Abort()
+			if abortErr := writer.Abort(); abortErr != nil {
+				receiveErr = errors.Join(receiveErr, abortErr)
+			}
 		}
 	}()
 

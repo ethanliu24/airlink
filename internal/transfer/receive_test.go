@@ -237,6 +237,16 @@ func assertReceiveStreamClosedOnce(
 	assert.Equal(t, 1, closeCount(), "stream should be closed exactly once")
 }
 
+type receiveAbortErrorWriter struct {
+	*mockWriter
+	abortErr error
+}
+
+func (w *receiveAbortErrorWriter) Abort() error {
+	w.calls = append(w.calls, "abort")
+	return w.abortErr
+}
+
 func TestNewReceiveTransfer(t *testing.T) {
 	t.Parallel()
 
@@ -1249,6 +1259,35 @@ func TestReceiveData(t *testing.T) {
 		require.ErrorIs(t, err, expectedErr)
 		assert.Zero(t, n)
 		assert.Equal(t, []string{"abort"}, mw.calls)
+	})
+
+	t.Run("joins writer abort error with receive error", func(t *testing.T) {
+		t.Parallel()
+
+		readErr := errors.New("stream read failed")
+		abortErr := errors.New("writer abort failed")
+		stream, _, _ := newReceiveTestStream(
+			func([]byte) (int, error) {
+				return 0, readErr
+			},
+			nil,
+		)
+		transfer := newReceiveTestTransfer(stream)
+		transfer.state = receiveReceiving
+
+		writer := &receiveAbortErrorWriter{
+			mockWriter: &mockWriter{},
+			abortErr:   abortErr,
+		}
+		transfer.openWriter = func(string) (file.Writer, error) {
+			return writer, nil
+		}
+
+		_, err := transfer.receiveData()
+
+		require.ErrorIs(t, err, readErr)
+		assert.ErrorIs(t, err, abortErr)
+		assert.Equal(t, []string{"abort"}, writer.calls)
 	})
 
 	t.Run("aborts writer when write fails", func(t *testing.T) {
