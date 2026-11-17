@@ -428,6 +428,9 @@ func (r *receive) receiveData() (int, error) {
 			bytesWrote, wErr := writer.Write(buf[:bytesRead])
 			totalBytesWrote += bytesWrote
 			writeErr = wErr
+			if writeErr == nil && bytesWrote != bytesRead {
+				writeErr = io.ErrShortWrite
+			}
 		}
 
 		if errors.Is(readErr, io.EOF) {

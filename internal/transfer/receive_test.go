@@ -1495,8 +1495,7 @@ func TestReceiveData(t *testing.T) {
 
 		n, err := transfer.receiveData()
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "received/wrote byte count mismatch")
+		require.ErrorIs(t, err, io.ErrShortWrite)
 
 		assert.Equal(t, len(data)-1, n)
 		assert.Equal(t, data[:len(data)-1], writer.data)
