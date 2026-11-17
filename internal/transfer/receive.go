@@ -46,11 +46,13 @@ type receive struct {
 	destinationPath        string
 	consumed               bool
 
-	emitEvent              event.EmitEventFunc
-	acceptTransfer         chan bool
-	acceptOnce             sync.Once
-	selectedDestination    chan string
-	requestDestinationOnce sync.Once
+	emitEvent                event.EmitEventFunc
+	acceptTransfer           chan bool
+	acceptOnce               sync.Once
+	selectedDestination      chan string
+	requestDestinationOnce   sync.Once
+	handleDupDestination     chan file.WriterCommitMode
+	handleDupDestinationOnce sync.Once
 }
 
 type receiveResult struct {
@@ -359,6 +361,32 @@ func (r *receive) sendResponse() error {
 	return nil
 }
 
+func (r *receive) requestDuplicatedFileHandling(destination string) error {
+	if destination == "" {
+		return fmt.Errorf("requestDuplicatedFileHandling destination path is empty")
+	}
+
+	payload := &ReceiveDuplicateFileNamePayload{TransferId: r.id, DestinationPath: destination}
+	event, err := event.NewEvent(ReceiveDuplicateFileNameEvtName, payload)
+	if err != nil {
+		return err
+	}
+
+	err = r.emitEvent(event)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *receive) duplicatedFileHandlingDecision(mode file.WriterCommitMode) {
+	r.handleDupDestinationOnce.Do(func() {
+		r.handleDupDestination <- mode
+		close(r.handleDupDestination)
+	})
+}
+
 func (r *receive) receiveData() (int, error) {
 	if r.state != receiveReceiving {
 		return 0, fmt.Errorf(
@@ -408,12 +436,48 @@ func (r *receive) receiveData() (int, error) {
 		}
 	}
 
+	// TODO add checksum check
+
+	if uint64(totalBytesRead) != r.request.FileSize {
+		return totalBytesWrote, fmt.Errorf(
+			"file size mismatch: expected %d bytes, received %d",
+			r.request.FileSize,
+			totalBytesRead,
+		)
+	}
+
+	if totalBytesWrote != totalBytesRead {
+		return totalBytesWrote, fmt.Errorf(
+			"received/wrote byte count mismatch: read %d bytes, wrote %d bytes",
+			totalBytesRead,
+			totalBytesWrote,
+		)
+	}
+
 	err = writer.Close()
 	if err != nil {
 		return totalBytesWrote, err
 	}
 
-	writer.Commit(file.WriteCommitRaise)
+	err = writer.Commit(file.WriteCommitRaise)
+	if err != nil {
+		if !errors.Is(err, file.DuplicateFileFound) {
+			return totalBytesWrote, err
+		}
+
+		err = r.requestDuplicatedFileHandling(r.destinationPath)
+		if err != nil {
+			return totalBytesWrote, err
+		}
+
+		commitMode := <-r.handleDupDestination
+
+		err = writer.Commit(commitMode)
+		if err != nil {
+			return totalBytesWrote, err
+		}
+	}
+
 	committed = true
 
 	return totalBytesWrote, nil
@@ -439,6 +503,7 @@ func newReceiveTransfer(
 		consumed:               false,
 		acceptTransfer:         make(chan bool, 1),
 		selectedDestination:    make(chan string, 1),
+		handleDupDestination:   make(chan file.WriterCommitMode, 1),
 		emitEvent:              emitEvent,
 	}
 }

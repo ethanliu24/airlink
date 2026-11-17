@@ -64,6 +64,10 @@ func (n *P2PNode) SubmitDownloadDestination(id transfer.TransferId, destination 
 	return n.transferManager.SubmitDownloadDestination(id, destination)
 }
 
+func (n *P2PNode) SubmitDuplicatedDestinationHandling(id transfer.TransferId, mode file.WriterCommitMode) error {
+	return n.transferManager.SubmitDuplicatedDestinationHandling(id, mode)
+}
+
 func NewP2PNode(addr *net.UDPAddr) (*P2PNode, error) {
 	return newP2PNode(addr, net.ListenUDP, file.OpenReader)
 }

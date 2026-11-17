@@ -24,3 +24,10 @@ type TransferTimedOutPayload struct {
 	TransferId TransferId
 	Message    string
 }
+
+const ReceiveDuplicateFileNameEvtName = moduleEventPrefix + "." + "duplicateFileName"
+
+type ReceiveDuplicateFileNamePayload struct {
+	TransferId      TransferId
+	DestinationPath string
+}

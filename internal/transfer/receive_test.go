@@ -4,6 +4,7 @@ import (
 	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
+	"fmt"
 
 	"bytes"
 	"context"
@@ -1080,6 +1081,9 @@ func TestReceiveData(t *testing.T) {
 
 		transfer := newReceiveTestTransfer(stream)
 		transfer.state = receiveReceiving
+		transfer.request = &models.TransferRequest{
+			FileSize: uint64(len(data)),
+		}
 
 		n, err := transfer.receiveData()
 
@@ -1097,6 +1101,9 @@ func TestReceiveData(t *testing.T) {
 
 		transfer := newReceiveTestTransfer(stream)
 		transfer.state = receiveReceiving
+		transfer.request = &models.TransferRequest{
+			FileSize: uint64(len(data)),
+		}
 
 		writer, err := newMockWriter("test/")
 		transfer.openWriter = func(path string) (file.Writer, error) {
@@ -1104,11 +1111,14 @@ func TestReceiveData(t *testing.T) {
 		}
 
 		require.NoError(t, err)
+
 		n, err := transfer.receiveData()
+
 		require.NoError(t, err)
 
 		mw, ok := writer.(*mockWriter)
 		require.True(t, ok)
+
 		assert.Equal(t, len(mw.data), n)
 		assert.Equal(t, string(mw.data), data)
 	})
@@ -1187,6 +1197,9 @@ func TestReceiveData(t *testing.T) {
 
 		transfer := newReceiveTestTransfer(stream)
 		transfer.state = receiveReceiving
+		transfer.request = &models.TransferRequest{
+			FileSize: uint64(len(data)),
+		}
 
 		writer, err := newMockWriter("test/")
 		require.NoError(t, err)
@@ -1202,7 +1215,7 @@ func TestReceiveData(t *testing.T) {
 		assert.Equal(t, len(data), n)
 		assert.Equal(t, data, mw.data)
 		assert.Equal(t, []string{"close", "commit"}, mw.calls)
-		assert.Equal(t, file.WriteCommitRaise, mw.commitMode)
+		assert.Equal(t, file.WriteCommitRaise, mw.commitModes[0])
 	})
 
 	t.Run("aborts writer when stream read fails", func(t *testing.T) {
@@ -1262,6 +1275,212 @@ func TestReceiveData(t *testing.T) {
 		assert.Zero(t, n)
 		assert.Equal(t, []string{"abort"}, mw.calls)
 	})
+
+	t.Run("requests duplicate handling and retries commit", func(t *testing.T) {
+		t.Parallel()
+
+		data := "hello world"
+		incoming := bytes.NewReader([]byte(data))
+
+		stream, _, _ := newReceiveTestStream(incoming.Read, nil)
+
+		transfer := newReceiveTestTransfer(stream)
+		transfer.state = receiveReceiving
+		transfer.destinationPath = "test/hello.txt"
+		transfer.setId("test-transfer-id")
+		transfer.request = &models.TransferRequest{
+			FileSize: uint64(len(data)),
+		}
+		transfer.handleDupDestination = make(chan file.WriterCommitMode, 1)
+
+		writer := &mockWriter{
+			path:         transfer.destinationPath,
+			commitErrors: []error{file.DuplicateFileFound},
+		}
+
+		transfer.openWriter = func(path string) (file.Writer, error) {
+			return writer, nil
+		}
+
+		// Simulate the user choosing to replace the existing file.
+		transfer.duplicatedFileHandlingDecision(file.WriteCommitReplace)
+
+		n, err := transfer.receiveData()
+
+		require.NoError(t, err)
+		assert.Equal(t, len(data), n)
+		assert.Equal(t, data, writer.data)
+		assert.Equal(t, []string{"close", "commit", "commit"}, writer.calls)
+		assert.Equal(t, []file.WriterCommitMode{
+			file.WriteCommitRaise,
+			file.WriteCommitReplace,
+		}, writer.commitModes)
+	})
+
+	t.Run("aborts writer when duplicate handling request fails", func(t *testing.T) {
+		t.Parallel()
+
+		data := "hello world"
+		incoming := bytes.NewReader([]byte(data))
+
+		stream, _, _ := newReceiveTestStream(incoming.Read, nil)
+
+		transfer := newReceiveTestTransfer(stream)
+		transfer.state = receiveReceiving
+		transfer.destinationPath = ""
+		transfer.request = &models.TransferRequest{
+			FileSize: uint64(len(data)),
+		}
+
+		writer := &mockWriter{
+			commitErrors: []error{file.DuplicateFileFound},
+		}
+
+		// The mock accepts an empty path so we can exercise the
+		// duplicate handling error path.
+		transfer.openWriter = func(path string) (file.Writer, error) {
+			return writer, nil
+		}
+
+		n, err := transfer.receiveData()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "destination path is empty")
+		assert.Equal(t, len(data), n)
+		assert.Equal(t, []string{"close", "commit", "abort"}, writer.calls)
+	})
+
+	t.Run("returns error when received file size does not match request", func(t *testing.T) {
+		t.Parallel()
+
+		data := "hello world"
+		incoming := bytes.NewReader([]byte(data))
+
+		stream, _, _ := newReceiveTestStream(incoming.Read, nil)
+
+		transfer := newReceiveTestTransfer(stream)
+		transfer.state = receiveReceiving
+		transfer.request = &models.TransferRequest{
+			FileSize: uint64(len(data) + 1),
+		}
+
+		writer := &mockWriter{}
+		transfer.openWriter = func(path string) (file.Writer, error) {
+			return writer, nil
+		}
+
+		n, err := transfer.receiveData()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "file size mismatch")
+		assert.Contains(t, err.Error(), fmt.Sprintf("%d", len(data)+1))
+		assert.Contains(t, err.Error(), fmt.Sprintf("%d", len(data)))
+
+		assert.Equal(t, len(data), n)
+		assert.Equal(t, data, writer.data)
+		assert.Equal(t, []string{"abort"}, writer.calls)
+	})
+
+	t.Run("returns error when bytes written do not match bytes read", func(t *testing.T) {
+		t.Parallel()
+
+		data := "hello world"
+		incoming := bytes.NewReader([]byte(data))
+
+		stream, _, _ := newReceiveTestStream(incoming.Read, nil)
+
+		transfer := newReceiveTestTransfer(stream)
+		transfer.state = receiveReceiving
+		transfer.request = &models.TransferRequest{
+			FileSize: uint64(len(data)),
+		}
+
+		writer := &mockWriter{
+			shortWrite: true,
+		}
+
+		transfer.openWriter = func(path string) (file.Writer, error) {
+			return writer, nil
+		}
+
+		n, err := transfer.receiveData()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "received/wrote byte count mismatch")
+
+		assert.Equal(t, len(data)-1, n)
+		assert.Equal(t, data[:len(data)-1], writer.data)
+		assert.Equal(t, []string{"abort"}, writer.calls)
+	})
+}
+
+func TestRequestDuplicatedFileHandling(t *testing.T) {
+    t.Parallel()
+
+    t.Run("returns error when destination is empty", func(t *testing.T) {
+        t.Parallel()
+
+        stream, _, _ := newReceiveTestStream(nil, nil)
+        transfer := newReceiveTestTransfer(stream)
+
+        err := transfer.requestDuplicatedFileHandling("")
+
+        require.Error(t, err)
+        assert.Contains(t, err.Error(), "destination path is empty")
+    })
+
+    t.Run("emits duplicate file handling event", func(t *testing.T) {
+        t.Parallel()
+
+        stream, _, _ := newReceiveTestStream(nil, nil)
+        transfer := newReceiveTestTransfer(stream)
+        transfer.setId("test-transfer-id")
+
+        err := transfer.requestDuplicatedFileHandling("test/hello.txt")
+
+        require.NoError(t, err)
+    })
+}
+
+func TestDuplicatedFileHandlingDecision(t *testing.T) {
+    t.Parallel()
+
+    t.Run("submits decision and closes channel", func(t *testing.T) {
+        t.Parallel()
+
+        stream, _, _ := newReceiveTestStream(nil, nil)
+        transfer := newReceiveTestTransfer(stream)
+        transfer.handleDupDestination = make(chan file.WriterCommitMode, 1)
+
+        transfer.duplicatedFileHandlingDecision(file.WriteCommitReplace)
+
+        mode, ok := <-transfer.handleDupDestination
+
+        require.True(t, ok)
+        assert.Equal(t, file.WriteCommitReplace, mode)
+
+        _, ok = <-transfer.handleDupDestination
+        assert.False(t, ok)
+    })
+
+    t.Run("only accepts first decision", func(t *testing.T) {
+        t.Parallel()
+
+        stream, _, _ := newReceiveTestStream(nil, nil)
+        transfer := newReceiveTestTransfer(stream)
+        transfer.handleDupDestination = make(chan file.WriterCommitMode, 1)
+
+        transfer.duplicatedFileHandlingDecision(file.WriteCommitReplace)
+        transfer.duplicatedFileHandlingDecision(file.WriteCommitRaise)
+
+        mode, ok := <-transfer.handleDupDestination
+
+        require.True(t, ok)
+        assert.Equal(t, file.WriteCommitReplace, mode)
+
+        _, ok = <-transfer.handleDupDestination
+        assert.False(t, ok)
+    })
 }
 
 func TestReceiveRun(t *testing.T) {
@@ -1459,6 +1678,7 @@ func TestReceiveRun(t *testing.T) {
 
 		approvalTimeout := 30 * time.Millisecond
 		request := newValidReceiveRequest()
+		request.FileSize = 0
 		incoming := newReceiveTestInput(t, request, nil)
 		blockingReader := &receiveBlockingReader{
 			input:       incoming,

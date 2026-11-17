@@ -2,6 +2,7 @@ package main
 
 import (
 	"airlink/internal/event"
+	"airlink/internal/file"
 	"airlink/internal/node"
 	"airlink/internal/transfer"
 	"bufio"
@@ -78,6 +79,30 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 					return err
 				}
 			}
+		case transfer.ReceiveDuplicateFileNameEvtName:
+			payload := e.Payload().(*transfer.ReceiveDuplicateFileNamePayload)
+			scanner := bufio.NewScanner(os.Stdin)
+
+			printToTerminal(
+				"Destination already exists - resolve? [%s/%s/%s] ",
+				file.WriteCommitRaise,
+				file.WriteCommitReplace,
+				file.WriteCommitAbort,
+			)
+
+			if scanner.Scan() {
+				input := strings.TrimSpace(scanner.Text())
+
+				mode, err := file.ParseWriteCommitMode(input)
+				if err != nil {
+					return err
+				}
+
+				err = node.SubmitDuplicatedDestinationHandling(payload.TransferId, mode)
+				if err != nil {
+					return err
+				}
+			}
 		case transfer.TransferTimedOutEvtName:
 			payload := e.Payload().(*transfer.TransferTimedOutPayload)
 			printToTerminal("Transfer timed out - message: %s, id: %s\n", payload.Message, payload.TransferId)
@@ -116,7 +141,7 @@ func startReceiver() {
 // go run cmd/test/main.go --sender=true
 // go run cmd/test/main.go --sender=false > tmp/listener.txt
 // source: cmd/test/file.txt
-// destination: tmp/destination.txt
+// destination: tmp/file.txt
 func main() {
 	isSender := flag.Bool("sender", false, "whether the node focuses on listening or sending")
 

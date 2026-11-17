@@ -17,6 +17,7 @@ type WriterCommitMode string
 const (
 	WriteCommitRaise   WriterCommitMode = "raise"
 	WriteCommitReplace WriterCommitMode = "replace"
+	WriteCommitAbort   WriterCommitMode = "abort"
 )
 
 var DuplicateFileFound = errors.New("duplicate file found")
@@ -51,11 +52,14 @@ func (fw *FileWriter) Close() error {
 	return fw.stagingFile.Close()
 }
 
-func (fw *FileWriter) Commit(mode WriterCommitMode) error {
-	switch mode {
-	case WriteCommitRaise, WriteCommitReplace:
-	default:
-		return fmt.Errorf("unrecognized writer commit mode: %s", mode)
+func (fw *FileWriter) Commit(m WriterCommitMode) error {
+	mode, err := ParseWriteCommitMode(string(m))
+	if err != nil {
+		return err
+	}
+
+	if mode == WriteCommitAbort {
+		return fw.Abort()
 	}
 
 	commitSuccess := false
@@ -65,7 +69,7 @@ func (fw *FileWriter) Commit(mode WriterCommitMode) error {
 		}
 	}()
 
-	err := os.Link(fw.stagingPath, fw.destination)
+	err = os.Link(fw.stagingPath, fw.destination)
 
 	if err != nil {
 		if !errors.Is(err, os.ErrExist) {
@@ -170,7 +174,7 @@ func OpenWriter(path string) (Writer, error) {
 
 	stagingFile, err := os.OpenFile(
 		stagingCanonicalPath,
-		os.O_WRONLY | os.O_CREATE | os.O_EXCL,
+		os.O_WRONLY|os.O_CREATE|os.O_EXCL,
 		0644,
 	)
 
@@ -205,4 +209,14 @@ func OpenWriter(path string) (Writer, error) {
 		createdDirs: createdDirs,
 		stagingFile: stagingFile,
 	}, nil
+}
+
+func ParseWriteCommitMode(mode string) (WriterCommitMode, error) {
+	m := WriterCommitMode(mode)
+	switch m {
+	case WriteCommitRaise, WriteCommitReplace, WriteCommitAbort:
+		return m, nil
+	default:
+		return "", fmt.Errorf("unrecognized writer commit mode: %s", mode)
+	}
 }
