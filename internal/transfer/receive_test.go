@@ -1317,6 +1317,68 @@ func TestReceiveData(t *testing.T) {
 		}, writer.commitModes)
 	})
 
+	t.Run("cancels while waiting for duplicate handling", func(t *testing.T) {
+		t.Parallel()
+
+		data := "hello world"
+		incoming := bytes.NewReader([]byte(data))
+		stream, _, _ := newReceiveTestStream(incoming.Read, nil)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		transfer := newReceiveTestTransferWithContext(
+			stream,
+			event.EmitEventFunc(func(event.Event) error {
+				cancel()
+				return nil
+			}),
+			ctx,
+			cancel,
+			receiveStateTestTimeout,
+		)
+		transfer.state = receiveReceiving
+		transfer.destinationPath = "test/hello.txt"
+		transfer.request = &models.TransferRequest{FileSize: uint64(len(data))}
+
+		writer := &mockWriter{commitErrors: []error{file.DuplicateFileFound}}
+		transfer.openWriter = func(string) (file.Writer, error) {
+			return writer, nil
+		}
+
+		n, err := transfer.receiveData()
+
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Equal(t, len(data), n)
+		assert.Equal(t, []string{"close", "commit", "abort"}, writer.calls)
+		assert.Equal(t, []file.WriterCommitMode{file.WriteCommitRaise}, writer.commitModes)
+	})
+
+	t.Run("returns error when duplicate decision channel is closed", func(t *testing.T) {
+		t.Parallel()
+
+		data := "hello world"
+		incoming := bytes.NewReader([]byte(data))
+		stream, _, _ := newReceiveTestStream(incoming.Read, nil)
+		transfer := newReceiveTestTransfer(stream)
+		transfer.state = receiveReceiving
+		transfer.destinationPath = "test/hello.txt"
+		transfer.request = &models.TransferRequest{FileSize: uint64(len(data))}
+		transfer.handleDupDestination = make(chan file.WriterCommitMode)
+		close(transfer.handleDupDestination)
+
+		writer := &mockWriter{commitErrors: []error{file.DuplicateFileFound}}
+		transfer.openWriter = func(string) (file.Writer, error) {
+			return writer, nil
+		}
+
+		n, err := transfer.receiveData()
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate file handling decision channel closed")
+		assert.Equal(t, len(data), n)
+		assert.Equal(t, []string{"close", "commit", "abort"}, writer.calls)
+		assert.Equal(t, []file.WriterCommitMode{file.WriteCommitRaise}, writer.commitModes)
+	})
+
 	t.Run("aborts writer when duplicate handling request fails", func(t *testing.T) {
 		t.Parallel()
 
