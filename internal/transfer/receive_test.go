@@ -1133,6 +1133,41 @@ func TestReceiveData(t *testing.T) {
 		assert.Equal(t, string(mw.data), data)
 	})
 
+	t.Run("receives data around the buffer boundary", func(t *testing.T) {
+		for _, testCase := range []struct {
+			name string
+			size int
+		}{
+			{name: "empty file", size: 0},
+			{name: "exactly one receive buffer", size: receiveBufferSizeBytes},
+			{name: "one byte larger than receive buffer", size: receiveBufferSizeBytes + 1},
+		} {
+			t.Run(testCase.name, func(t *testing.T) {
+				t.Parallel()
+
+				data := bytes.Repeat([]byte("x"), testCase.size)
+				incoming := bytes.NewReader(data)
+				stream, _, _ := newReceiveTestStream(incoming.Read, nil)
+				transfer := newReceiveTestTransfer(stream)
+				transfer.state = receiveReceiving
+				transfer.request = &models.TransferRequest{FileSize: uint64(len(data))}
+
+				writer := &mockWriter{}
+				transfer.openWriter = func(string) (file.Writer, error) {
+					return writer, nil
+				}
+
+				n, err := transfer.receiveData()
+
+				require.NoError(t, err)
+				assert.Equal(t, testCase.size, n)
+				assert.Equal(t, string(data), writer.data)
+				assert.Equal(t, []string{"close", "commit"}, writer.calls)
+				assert.Equal(t, []file.WriterCommitMode{file.WriteCommitRaise}, writer.commitModes)
+			})
+		}
+	})
+
 	t.Run("invalid state", func(t *testing.T) {
 		t.Parallel()
 
