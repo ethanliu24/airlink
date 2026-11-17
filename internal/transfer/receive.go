@@ -470,7 +470,16 @@ func (r *receive) receiveData() (int, error) {
 			return totalBytesWrote, err
 		}
 
-		commitMode := <-r.handleDupDestination
+		var commitMode file.WriterCommitMode
+		select {
+		case mode, ok := <-r.handleDupDestination:
+			if !ok {
+				return totalBytesWrote, fmt.Errorf("duplicate file handling decision channel closed")
+			}
+			commitMode = mode
+		case <-r.ctx.Done():
+			return totalBytesWrote, r.ctx.Err()
+		}
 
 		err = writer.Commit(commitMode)
 		if err != nil {
