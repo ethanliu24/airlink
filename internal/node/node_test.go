@@ -1,9 +1,12 @@
-
 package node
 
 import (
+	"airlink/internal/discovery"
 	"airlink/internal/event"
 	"airlink/internal/file"
+	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,14 +40,29 @@ type nodeTestEventPayload struct {
 	Message string `json:"message"`
 }
 
+func newNoopMDNSDiscovery(_ *net.UDPAddr) (discovery.Discovery, error) {
+	return &mockMDNSDiscovery{
+		start: func() error { return nil },
+		stop:  func() error { return nil },
+	}, nil
+}
+
 func newStartedTestNode(t *testing.T) *P2PNode {
 	t.Helper()
 
 	addr, err := toUDPAddress(NODE_TEST_IP, 0)
 	require.NoError(t, err)
 
-	node, err := newP2PNode(addr, net.ListenUDP, mockOpenReader)
+	node, err := newP2PNode(addr, mockListen, mockOpenReader, newNoopMDNSDiscovery)
 	require.NoError(t, err)
+	node.receiver.listen = func(_ *tls.Config, _ *quic.Config) (Listener, error) {
+		return &mockListener{
+			acceptFunc: func(context.Context) (Conn, error) {
+				return nil, errors.New("listener closed")
+			},
+			closeFunc: func() error { return nil },
+		}, nil
+	}
 
 	err = node.Start()
 	require.NoError(t, err)
@@ -64,7 +83,7 @@ func TestNewP2PNodeInternal(t *testing.T) {
 		addr, err := toUDPAddress(NODE_TEST_IP, 1234)
 		require.NoError(t, err)
 
-		node, err := newP2PNode(addr, mockListen, mockOpenReader)
+		node, err := newP2PNode(addr, mockListen, mockOpenReader, newNoopMDNSDiscovery)
 		require.NoError(t, err)
 
 		assert.Equal(t, fmt.Sprintf("%s:1234", NODE_TEST_IP), node.addr.String())
@@ -73,6 +92,22 @@ func TestNewP2PNodeInternal(t *testing.T) {
 			node.Cleanup()
 		})
 	})
+}
+
+func TestNewP2PNodeReturnsMDNSDiscoveryError(t *testing.T) {
+	addr, err := toUDPAddress(NODE_TEST_IP, 1234)
+	require.NoError(t, err)
+
+	wantErr := errors.New("mDNS discovery creation failed")
+	node, err := newP2PNode(
+		addr,
+		mockListen,
+		mockOpenReader,
+		func(*net.UDPAddr) (discovery.Discovery, error) { return nil, wantErr },
+	)
+
+	require.ErrorIs(t, err, wantErr)
+	assert.Nil(t, node)
 }
 
 func TestP2PNodeStart(t *testing.T) {
@@ -96,6 +131,107 @@ func TestP2PNodeStart(t *testing.T) {
 		node := newStartedTestNode(t)
 
 		require.NotNil(t, node.eventManager)
+	})
+}
+
+func TestP2PNodeStartBeginsDiscoveryAfterListening(t *testing.T) {
+	addr, err := toUDPAddress(NODE_TEST_IP, 1234)
+	require.NoError(t, err)
+
+	order := make([]string, 0, 2)
+	mdns := &mockMDNSDiscovery{
+		start: func() error {
+			order = append(order, "discovery")
+			return nil
+		},
+		stop: func() error { return nil },
+	}
+	node, err := newP2PNode(
+		addr,
+		mockListen,
+		mockOpenReader,
+		func(_ *net.UDPAddr) (discovery.Discovery, error) { return mdns, nil },
+	)
+	require.NoError(t, err)
+	node.receiver.listen = func(_ *tls.Config, _ *quic.Config) (Listener, error) {
+		order = append(order, "listener")
+		return &mockListener{
+			acceptFunc: func(context.Context) (Conn, error) {
+				return nil, errors.New("listener closed")
+			},
+			closeFunc: func() error { return nil },
+		}, nil
+	}
+
+	require.NoError(t, node.Start())
+	assert.Equal(t, []string{"listener", "discovery"}, order)
+
+	node.receiver.Cleanup()
+	node.eventManager.CleanUp()
+	node.transferManager.CleanUp()
+}
+
+func TestP2PNodeStartDoesNotAdvertiseWhenListeningFails(t *testing.T) {
+	addr, err := toUDPAddress(NODE_TEST_IP, 1234)
+	require.NoError(t, err)
+
+	started := false
+	node, err := newP2PNode(
+		addr,
+		mockListen,
+		mockOpenReader,
+		func(_ *net.UDPAddr) (discovery.Discovery, error) {
+			return &mockMDNSDiscovery{
+				start: func() error {
+					started = true
+					return nil
+				},
+				stop: func() error { return nil },
+			}, nil
+		},
+	)
+	require.NoError(t, err)
+	node.receiver.listen = func(_ *tls.Config, _ *quic.Config) (Listener, error) {
+		return nil, errors.New("listen failed")
+	}
+
+	require.Error(t, node.Start())
+	assert.False(t, started)
+
+	node.eventManager.CleanUp()
+	node.transferManager.CleanUp()
+}
+
+func TestP2PNodePeerDiscovery(t *testing.T) {
+	t.Parallel()
+
+	t.Run("populates entries channel", func(t *testing.T) {
+		addr, err := toUDPAddress(NODE_TEST_IP, 1234)
+		require.NoError(t, err)
+
+		entries := make(chan *discovery.MDNSServiceEntry, 1)
+		node, err := newP2PNode(
+			addr,
+			mockListen,
+			mockOpenReader,
+			func(_ *net.UDPAddr) (discovery.Discovery, error) {
+				return &mockMDNSDiscovery{
+					start: func() error { return nil },
+					stop:  func() error { return nil },
+					discover: func(c chan *discovery.MDNSServiceEntry) error {
+						c <-&discovery.MDNSServiceEntry{Name: "Test"}
+						return nil
+					},
+				}, nil
+			},
+		)
+
+		require.NoError(t, err)
+
+		node.DiscoverPeers(entries)
+
+		assert.Equal(t, len(entries), 1)
+		assert.Equal(t, (<-entries).Name, "Test")
 	})
 }
 

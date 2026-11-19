@@ -1,6 +1,7 @@
 package node
 
 import (
+	"airlink/internal/discovery"
 	"airlink/internal/transfer"
 	"context"
 	"crypto/ecdsa"
@@ -121,4 +122,22 @@ func (l *mockListener) Accept(ctx context.Context) (Conn, error) {
 
 func (l *mockListener) Close() error {
 	return l.closeFunc()
+}
+
+type mockMDNSDiscovery struct {
+	start    func() error
+	stop     func() error
+	discover func(chan *discovery.MDNSServiceEntry) error
+}
+
+func (d *mockMDNSDiscovery) Start() error {
+	return d.start()
+}
+
+func (d *mockMDNSDiscovery) Stop() error {
+	return d.stop()
+}
+
+func (d *mockMDNSDiscovery) Discover(entries chan *discovery.MDNSServiceEntry) error {
+	return d.discover(entries)
 }

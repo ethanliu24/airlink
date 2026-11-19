@@ -20,6 +20,8 @@ type Listener interface {
 	Close() error
 }
 
+type udpListenFunc func(network string, address *net.UDPAddr) (*net.UDPConn, error)
+
 type dialFunc func(context.Context, net.Addr, *tls.Config, *quic.Config) (Conn, error)
 
 type listenFunc func(*tls.Config, *quic.Config) (Listener, error)
