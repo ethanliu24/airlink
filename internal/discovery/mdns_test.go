@@ -22,11 +22,17 @@ func (s *mockMDNSServer) Shutdown() error {
 func TestMDNSDiscoveryStartStopLifecycle(t *testing.T) {
 	server := &mockMDNSServer{}
 	newServerCalls := 0
-	discovery := newMDNSDiscovery(&mdns.MDNSService{}, func(config *mdns.Config) (mdnsServer, error) {
-		newServerCalls++
-		assert.NotNil(t, config.Zone)
-		return server, nil
-	})
+	discovery := newMDNSDiscovery(
+		&mdns.MDNSService{},
+		func(config *mdns.Config) (mdnsServer, error) {
+			newServerCalls++
+			assert.NotNil(t, config.Zone)
+			return server, nil
+		},
+		func(s string, c chan *MDNSServiceEntry) error {
+			return nil
+		},
+	)
 
 	require.NoError(t, discovery.Stop(), "stopping before start must be safe")
 	require.NoError(t, discovery.Start())
@@ -39,10 +45,16 @@ func TestMDNSDiscoveryStartStopLifecycle(t *testing.T) {
 }
 
 func TestMDNSDiscoveryStartRejectsNilService(t *testing.T) {
-	discovery := newMDNSDiscovery(nil, func(*mdns.Config) (mdnsServer, error) {
-		t.Fatal("server must not be created without a service")
-		return nil, nil
-	})
+	discovery := newMDNSDiscovery(
+		nil,
+		func(*mdns.Config) (mdnsServer, error) {
+			t.Fatal("server must not be created without a service")
+			return nil, nil
+		},
+		func(s string, c chan *MDNSServiceEntry) error {
+			return nil
+		},
+	)
 
 	require.ErrorIs(t, discovery.Start(), ErrMDNSServiceNil)
 }
@@ -50,13 +62,61 @@ func TestMDNSDiscoveryStartRejectsNilService(t *testing.T) {
 func TestMDNSDiscoveryStopCanRetryAfterShutdownFailure(t *testing.T) {
 	shutdownErr := errors.New("shutdown failed")
 	server := &mockMDNSServer{shutdownErr: shutdownErr}
-	discovery := newMDNSDiscovery(&mdns.MDNSService{}, func(*mdns.Config) (mdnsServer, error) {
-		return server, nil
-	})
+	discovery := newMDNSDiscovery(
+		&mdns.MDNSService{},
+		func(*mdns.Config) (mdnsServer, error) {
+			return server, nil
+		},
+		func(s string, c chan *MDNSServiceEntry) error {
+			return nil
+		},
+	)
 	require.NoError(t, discovery.Start())
 
 	require.ErrorIs(t, discovery.Stop(), shutdownErr)
 	server.shutdownErr = nil
 	require.NoError(t, discovery.Stop())
 	assert.Equal(t, 2, server.shutdownCalls)
+}
+
+func TestMDNSDiscoveryDiscoverPassesServiceNameAndEntries(t *testing.T) {
+	entries := make(chan *MDNSServiceEntry)
+	lookupCalls := 0
+
+	var gotServiceName string
+	var gotEntries chan *MDNSServiceEntry
+
+	lookup := func(serviceName string, receivedEntries chan *MDNSServiceEntry) error {
+		lookupCalls++
+		gotServiceName = serviceName
+		gotEntries = receivedEntries
+		return nil
+	}
+
+	discovery := newMDNSDiscovery(&mdns.MDNSService{}, func(*mdns.Config) (mdnsServer, error) {
+		return nil, nil
+	}, lookup)
+
+	require.NoError(t, discovery.Discover(entries))
+
+	assert.Equal(t, 1, lookupCalls)
+	assert.Equal(t, MDNSServiceName, gotServiceName)
+	assert.Equal(t, entries, gotEntries)
+}
+
+func TestMDNSDiscoveryDiscoverReturnsLookupError(t *testing.T) {
+	lookupErr := errors.New("lookup failed")
+
+	lookup := func(string, chan *MDNSServiceEntry) error {
+		return lookupErr
+	}
+
+	discovery := newMDNSDiscovery(&mdns.MDNSService{}, func(*mdns.Config) (mdnsServer, error) {
+		return nil, nil
+	}, lookup)
+
+
+	err := discovery.Discover(make(chan *MDNSServiceEntry))
+
+	require.ErrorIs(t, err, lookupErr)
 }
