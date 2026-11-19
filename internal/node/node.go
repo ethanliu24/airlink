@@ -1,6 +1,7 @@
 package node
 
 import (
+	"airlink/internal/discovery"
 	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer"
@@ -8,6 +9,7 @@ import (
 	"crypto/tls"
 	"log/slog"
 	"net"
+	"os"
 
 	"github.com/quic-go/quic-go"
 )
@@ -15,14 +17,15 @@ import (
 const IP_ADDRESS = "127.0.0.1"
 
 type P2PNode struct {
+	addr            net.Addr
 	transport       *quic.Transport
+	tlsConfig       *tls.Config
+	quicConfig      *quic.Config
 	receiver        *receiver
 	sender          *sender
 	eventManager    *event.Manager
 	transferManager *transfer.Manager
-	addr            net.Addr
-	tlsConfig       *tls.Config
-	quicConfig      *quic.Config
+	mdnsDiscovery   discovery.Discovery
 }
 
 func (n *P2PNode) listen() error {
@@ -37,7 +40,17 @@ func (n *P2PNode) Start() error {
 		return err
 	}
 
+	err = n.mdnsDiscovery.Start()
+	if err != nil {
+		n.receiver.Cleanup()
+		return err
+	}
+
 	return nil
+}
+
+func (n *P2PNode) DiscoverPeers(entries chan *discovery.MDNSServiceEntry) {
+	n.mdnsDiscovery.Discover(entries)
 }
 
 func (n *P2PNode) SendFile(receiverAddr *net.UDPAddr, filename string) error {
@@ -49,6 +62,8 @@ func (n *P2PNode) RegisterEventHandler(handler event.EventHandlerFunc) error {
 }
 
 func (n *P2PNode) Cleanup() {
+	// TODO log errors or smth
+	n.mdnsDiscovery.Stop()
 	n.eventManager.CleanUp()
 	n.transferManager.CleanUp()
 	n.receiver.Cleanup()
@@ -69,19 +84,45 @@ func (n *P2PNode) SubmitDuplicatedDestinationHandling(id transfer.TransferId, mo
 }
 
 func NewP2PNode(addr *net.UDPAddr) (*P2PNode, error) {
-	return newP2PNode(addr, net.ListenUDP, file.OpenReader)
+	return newP2PNode(addr, net.ListenUDP, file.OpenReader, newMDNSDiscovery)
 }
 
-type udpListenFunc func(network string, address *net.UDPAddr) (*net.UDPConn, error)
+func newMDNSDiscovery(addr *net.UDPAddr) (discovery.Discovery, error) {
+	hostName, err := os.Hostname()
+	if err != nil {
+		return nil, err
+	}
+
+	return discovery.NewMDNSDiscovery(
+		hostName,
+		discovery.MDNSServiceName,
+		discovery.MDNSDomainName,
+		hostName,
+		addr.Port,
+		nil,
+		[]string{},
+	)
+}
 
 func newP2PNode(
 	addr *net.UDPAddr,
 	listen udpListenFunc,
 	openReader file.OpenReaderFunc,
+	discoverMDNS discovery.DiscoveryMDNSFunc,
 ) (*P2PNode, error) {
 	udpConn, err := listen(addr.Network(), addr)
 	if err != nil {
 		slog.Error("could not listen on UDP address", "address", addr, "err", err)
+		return nil, err
+	}
+
+	boundAddr := addr
+	if localAddr, ok := udpConn.LocalAddr().(*net.UDPAddr); ok {
+		boundAddr = localAddr
+	}
+
+	mdnsDiscovery, err := discoverMDNS(boundAddr)
+	if err != nil {
 		return nil, err
 	}
 
@@ -91,18 +132,19 @@ func newP2PNode(
 
 	transport := &quic.Transport{Conn: udpConn}
 	eventManager := event.NewManager()
-	transferManager := transfer.NewManager(addr, openReader, eventManager.EmitEvent, ctx, cancel)
+	transferManager := transfer.NewManager(boundAddr, openReader, eventManager.EmitEvent, ctx, cancel)
 	receiver := newReceiver(transport, transferManager.Receive)
-	sender := newSender(transport, addr, transferManager.Send)
+	sender := newSender(transport, boundAddr, transferManager.Send)
 
 	return &P2PNode{
+		addr:            boundAddr,
+		tlsConfig:       tlsConfig,
+		quicConfig:      quicConfig,
 		transport:       transport,
 		receiver:        receiver,
 		sender:          sender,
 		eventManager:    eventManager,
 		transferManager: transferManager,
-		addr:            addr,
-		tlsConfig:       tlsConfig,
-		quicConfig:      quicConfig,
+		mdnsDiscovery:   mdnsDiscovery,
 	}, nil
 }
