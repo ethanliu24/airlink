@@ -22,11 +22,14 @@ func (s *mockMDNSServer) Shutdown() error {
 func TestMDNSDiscoveryStartStopLifecycle(t *testing.T) {
 	server := &mockMDNSServer{}
 	newServerCalls := 0
-	discovery := newMDNSDiscovery(&mdns.MDNSService{}, func(config *mdns.Config) (mdnsServer, error) {
-		newServerCalls++
-		assert.NotNil(t, config.Zone)
-		return server, nil
-	})
+	discovery := newMDNSDiscovery(
+		&mdns.MDNSService{},
+		func(config *mdns.Config) (mdnsServer, error) {
+			newServerCalls++
+			assert.NotNil(t, config.Zone)
+			return server, nil
+		},
+	)
 
 	require.NoError(t, discovery.Stop(), "stopping before start must be safe")
 	require.NoError(t, discovery.Start())
@@ -39,10 +42,13 @@ func TestMDNSDiscoveryStartStopLifecycle(t *testing.T) {
 }
 
 func TestMDNSDiscoveryStartRejectsNilService(t *testing.T) {
-	discovery := newMDNSDiscovery(nil, func(*mdns.Config) (mdnsServer, error) {
-		t.Fatal("server must not be created without a service")
-		return nil, nil
-	})
+	discovery := newMDNSDiscovery(
+		nil,
+		func(*mdns.Config) (mdnsServer, error) {
+			t.Fatal("server must not be created without a service")
+			return nil, nil
+		},
+	)
 
 	require.ErrorIs(t, discovery.Start(), ErrMDNSServiceNil)
 }
@@ -50,9 +56,12 @@ func TestMDNSDiscoveryStartRejectsNilService(t *testing.T) {
 func TestMDNSDiscoveryStopCanRetryAfterShutdownFailure(t *testing.T) {
 	shutdownErr := errors.New("shutdown failed")
 	server := &mockMDNSServer{shutdownErr: shutdownErr}
-	discovery := newMDNSDiscovery(&mdns.MDNSService{}, func(*mdns.Config) (mdnsServer, error) {
-		return server, nil
-	})
+	discovery := newMDNSDiscovery(
+		&mdns.MDNSService{},
+		func(*mdns.Config) (mdnsServer, error) {
+			return server, nil
+		},
+	)
 	require.NoError(t, discovery.Start())
 
 	require.ErrorIs(t, discovery.Stop(), shutdownErr)

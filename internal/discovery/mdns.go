@@ -85,12 +85,18 @@ func NewMDNSDiscovery(
 		return nil, err
 	}
 
-	return newMDNSDiscovery(service, func(config *mdns.Config) (mdnsServer, error) {
-		return mdns.NewServer(config)
-	}), nil
+	return newMDNSDiscovery(
+		service,
+		func(config *mdns.Config) (mdnsServer, error) {
+			return mdns.NewServer(config)
+		},
+	), nil
 }
 
-func newMDNSDiscovery(service *mdns.MDNSService, newServer newMDNSServerFunc) *MDNSDiscovery {
+func newMDNSDiscovery(
+	service *mdns.MDNSService,
+	newServer newMDNSServerFunc,
+) *MDNSDiscovery {
 	return &MDNSDiscovery{
 		service:   service,
 		newServer: newServer,
