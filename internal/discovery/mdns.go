@@ -24,12 +24,17 @@ type mdnsServer interface {
 	Shutdown() error
 }
 
+type MDNSServiceEntry = mdns.ServiceEntry
+
 type newMDNSServerFunc func(*mdns.Config) (mdnsServer, error)
+
+type mdnsLookupFunc func(string, chan *MDNSServiceEntry) error
 
 type MDNSDiscovery struct {
 	service   *mdns.MDNSService
 	server    mdnsServer
 	newServer newMDNSServerFunc
+	lookup    mdnsLookupFunc
 	mu        sync.Mutex
 }
 
@@ -71,6 +76,10 @@ func (d *MDNSDiscovery) Stop() error {
 	return nil
 }
 
+func (d *MDNSDiscovery) Discover(entries chan *MDNSServiceEntry) error {
+	return d.lookup(MDNSServiceName, entries)
+}
+
 func NewMDNSDiscovery(
 	name string,
 	serviceName string,
@@ -90,15 +99,20 @@ func NewMDNSDiscovery(
 		func(config *mdns.Config) (mdnsServer, error) {
 			return mdns.NewServer(config)
 		},
+		func(service string, entries chan *MDNSServiceEntry) error {
+			return mdns.Lookup(service, entries)
+		},
 	), nil
 }
 
 func newMDNSDiscovery(
 	service *mdns.MDNSService,
 	newServer newMDNSServerFunc,
+	lookup mdnsLookupFunc,
 ) *MDNSDiscovery {
 	return &MDNSDiscovery{
 		service:   service,
 		newServer: newServer,
+		lookup:    lookup,
 	}
 }

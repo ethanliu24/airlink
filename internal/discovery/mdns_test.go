@@ -29,6 +29,9 @@ func TestMDNSDiscoveryStartStopLifecycle(t *testing.T) {
 			assert.NotNil(t, config.Zone)
 			return server, nil
 		},
+		func(s string, c chan *MDNSServiceEntry) error {
+			return nil
+		},
 	)
 
 	require.NoError(t, discovery.Stop(), "stopping before start must be safe")
@@ -48,6 +51,9 @@ func TestMDNSDiscoveryStartRejectsNilService(t *testing.T) {
 			t.Fatal("server must not be created without a service")
 			return nil, nil
 		},
+		func(s string, c chan *MDNSServiceEntry) error {
+			return nil
+		},
 	)
 
 	require.ErrorIs(t, discovery.Start(), ErrMDNSServiceNil)
@@ -61,6 +67,9 @@ func TestMDNSDiscoveryStopCanRetryAfterShutdownFailure(t *testing.T) {
 		func(*mdns.Config) (mdnsServer, error) {
 			return server, nil
 		},
+		func(s string, c chan *MDNSServiceEntry) error {
+			return nil
+		},
 	)
 	require.NoError(t, discovery.Start())
 
@@ -68,4 +77,46 @@ func TestMDNSDiscoveryStopCanRetryAfterShutdownFailure(t *testing.T) {
 	server.shutdownErr = nil
 	require.NoError(t, discovery.Stop())
 	assert.Equal(t, 2, server.shutdownCalls)
+}
+
+func TestMDNSDiscoveryDiscoverPassesServiceNameAndEntries(t *testing.T) {
+	entries := make(chan *MDNSServiceEntry)
+	lookupCalls := 0
+
+	var gotServiceName string
+	var gotEntries chan *MDNSServiceEntry
+
+	lookup := func(serviceName string, receivedEntries chan *MDNSServiceEntry) error {
+		lookupCalls++
+		gotServiceName = serviceName
+		gotEntries = receivedEntries
+		return nil
+	}
+
+	discovery := newMDNSDiscovery(&mdns.MDNSService{}, func(*mdns.Config) (mdnsServer, error) {
+		return nil, nil
+	}, lookup)
+
+	require.NoError(t, discovery.Discover(entries))
+
+	assert.Equal(t, 1, lookupCalls)
+	assert.Equal(t, MDNSServiceName, gotServiceName)
+	assert.Equal(t, entries, gotEntries)
+}
+
+func TestMDNSDiscoveryDiscoverReturnsLookupError(t *testing.T) {
+	lookupErr := errors.New("lookup failed")
+
+	lookup := func(string, chan *MDNSServiceEntry) error {
+		return lookupErr
+	}
+
+	discovery := newMDNSDiscovery(&mdns.MDNSService{}, func(*mdns.Config) (mdnsServer, error) {
+		return nil, nil
+	}, lookup)
+
+
+	err := discovery.Discover(make(chan *MDNSServiceEntry))
+
+	require.ErrorIs(t, err, lookupErr)
 }
