@@ -135,7 +135,6 @@ func periodicallyDiscoverPeers(node *node.P2PNode, entries chan *discovery.MDNSS
 }
 
 func startSender(p2pNode *node.P2PNode) {
-	// TODO buffer size should be configurable in runtime
 	peers := make(chan *discovery.MDNSServiceEntry, 16)
 	go periodicallyDiscoverPeers(p2pNode, peers)
 	go func() {

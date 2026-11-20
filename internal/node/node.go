@@ -49,8 +49,56 @@ func (n *P2PNode) Start() error {
 	return nil
 }
 
-func (n *P2PNode) DiscoverPeers(entries chan *discovery.MDNSServiceEntry) error {
-	return n.mdnsDiscovery.Discover(entries)
+func (n *P2PNode) isSelf(peer *discovery.MDNSServiceEntry) bool {
+    if peer == nil {
+        return false
+    }
+
+    localAddr, ok := n.addr.(*net.UDPAddr)
+    if !ok {
+        return false
+    }
+
+    if peer.Port != localAddr.Port {
+        return false
+    }
+
+	equalIPV4Addr := peer.AddrV4 != nil && peer.AddrV4.Equal(localAddr.IP)
+	equalIPV6Addr := peer.AddrV6 != nil && peer.AddrV6.Equal(localAddr.IP)
+
+	return equalIPV4Addr || equalIPV6Addr
+}
+
+func (n *P2PNode) DiscoverPeers(peers chan *discovery.MDNSServiceEntry) error {
+    bufferSize := cap(peers)
+    if bufferSize == 0 {
+        bufferSize = 32
+    }
+
+    entries := make(chan *discovery.MDNSServiceEntry, bufferSize)
+    filterDone := make(chan struct{})
+
+    go func() {
+        defer close(filterDone)
+
+        for peer := range entries {
+            if peer == nil || n.isSelf(peer) {
+                continue
+            }
+
+            select {
+            case peers <- peer:
+            default:
+            }
+        }
+    }()
+
+    err := n.mdnsDiscovery.Discover(entries)
+
+    close(entries)
+    <-filterDone
+
+    return err
 }
 
 func (n *P2PNode) SendFile(receiverAddr *net.UDPAddr, filename string) error {
