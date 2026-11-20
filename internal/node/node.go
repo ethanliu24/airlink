@@ -49,8 +49,8 @@ func (n *P2PNode) Start() error {
 	return nil
 }
 
-func (n *P2PNode) DiscoverPeers(entries chan *discovery.MDNSServiceEntry) {
-	n.mdnsDiscovery.Discover(entries)
+func (n *P2PNode) DiscoverPeers(entries chan *discovery.MDNSServiceEntry) error {
+	return n.mdnsDiscovery.Discover(entries)
 }
 
 func (n *P2PNode) SendFile(receiverAddr *net.UDPAddr, filename string) error {
@@ -97,10 +97,10 @@ func newMDNSDiscovery(addr *net.UDPAddr) (discovery.Discovery, error) {
 		hostName,
 		discovery.MDNSServiceName,
 		discovery.MDNSDomainName,
-		hostName,
+		"", // Let the library determine the host FQDN.
 		addr.Port,
+		[]net.IP{addr.IP}, // Advertise the actual listening IP.
 		nil,
-		[]string{},
 	)
 }
 
