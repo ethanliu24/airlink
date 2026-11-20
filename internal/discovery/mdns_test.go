@@ -79,44 +79,86 @@ func TestMDNSDiscoveryStopCanRetryAfterShutdownFailure(t *testing.T) {
 	assert.Equal(t, 2, server.shutdownCalls)
 }
 
-func TestMDNSDiscoveryDiscoverPassesServiceNameAndEntries(t *testing.T) {
-	entries := make(chan *MDNSServiceEntry)
-	lookupCalls := 0
+func TestMDNSDiscoveryDiscoverForwardsValidEntries(t *testing.T) {
+    expected := &MDNSServiceEntry{
+        Name: "SomeDevice._airlink._udp.local.",
+    }
 
-	var gotServiceName string
-	var gotEntries chan *MDNSServiceEntry
+    discovery := newMDNSDiscovery(
+        &mdns.MDNSService{},
+        nil,
+        func(service string, discovered chan *MDNSServiceEntry) error {
+            discovered <- expected
+            return nil
+        },
+    )
 
-	lookup := func(serviceName string, receivedEntries chan *MDNSServiceEntry) error {
-		lookupCalls++
-		gotServiceName = serviceName
-		gotEntries = receivedEntries
-		return nil
-	}
+    entries := make(chan *MDNSServiceEntry, 1)
 
-	discovery := newMDNSDiscovery(&mdns.MDNSService{}, func(*mdns.Config) (mdnsServer, error) {
-		return nil, nil
-	}, lookup)
+    require.NoError(t, discovery.Discover(entries))
 
-	require.NoError(t, discovery.Discover(entries))
-
-	assert.Equal(t, 1, lookupCalls)
-	assert.Equal(t, MDNSServiceName, gotServiceName)
-	assert.Equal(t, entries, gotEntries)
+    require.Len(t, entries, 1)
+    assert.Same(t, expected, <-entries)
 }
 
 func TestMDNSDiscoveryDiscoverReturnsLookupError(t *testing.T) {
-	lookupErr := errors.New("lookup failed")
+    lookupErr := errors.New("lookup failed")
 
-	lookup := func(string, chan *MDNSServiceEntry) error {
-		return lookupErr
-	}
+    discovery := newMDNSDiscovery(
+        &mdns.MDNSService{},
+        nil,
+        func(string, chan *MDNSServiceEntry) error {
+            return lookupErr
+        },
+    )
 
-	discovery := newMDNSDiscovery(&mdns.MDNSService{}, func(*mdns.Config) (mdnsServer, error) {
-		return nil, nil
-	}, lookup)
+    err := discovery.Discover(make(chan *MDNSServiceEntry))
 
+    require.ErrorIs(t, err, lookupErr)
+}
 
-	err := discovery.Discover(make(chan *MDNSServiceEntry))
+func TestMDNSDiscoveryDiscoverFiltersEntriesByService(t *testing.T) {
+    airlinkEntry := &MDNSServiceEntry{
+        Name: "SomeDevice._airlink._udp.local.",
+    }
+    uppercaseAirlinkEntry := &MDNSServiceEntry{
+        Name: "AnotherDevice._AIRLINK._UDP.LOCAL.",
+    }
 
-	require.ErrorIs(t, err, lookupErr)
+    lookupCalls := 0
+
+    discovery := newMDNSDiscovery(
+        &mdns.MDNSService{},
+        nil,
+        func(service string, discovered chan *MDNSServiceEntry) error {
+            lookupCalls++
+
+            assert.Equal(t, MDNSServiceName, service)
+
+            discovered <- nil
+            discovered <- &MDNSServiceEntry{
+                Name: "SomeDevice._airplay._tcp.local.",
+            }
+            discovered <- &MDNSServiceEntry{
+                Name: "SomeDevice._companion-link._tcp.local.",
+            }
+            discovered <- &MDNSServiceEntry{
+                Name: "SomeDevice._airlink._tcp.local.",
+            }
+            discovered <- airlinkEntry
+            discovered <- uppercaseAirlinkEntry
+
+            return nil
+        },
+    )
+
+    entries := make(chan *MDNSServiceEntry, 2)
+
+    require.NoError(t, discovery.Discover(entries))
+
+    assert.Equal(t, 1, lookupCalls)
+    require.Equal(t, 2, len(entries))
+
+    assert.Same(t, airlinkEntry, <-entries)
+    assert.Same(t, uppercaseAirlinkEntry, <-entries)
 }

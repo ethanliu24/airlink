@@ -1,6 +1,7 @@
 package main
 
 import (
+	"airlink/internal/discovery"
 	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/node"
@@ -9,11 +10,12 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const LOCAL_IP string = "127.0.0.1"
@@ -114,9 +116,42 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 	}
 }
 
-func startSender(node *node.P2PNode, receiverPort int, receiverAddr *net.UDPAddr) {
+func periodicallyDiscoverPeers(node *node.P2PNode, entries chan *discovery.MDNSServiceEntry) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		done := make(chan error, 1)
+
+		go func() {
+			err := node.DiscoverPeers(entries)
+			done <- err
+		}()
+
+		if err := <-done; err != nil {
+			log.Printf("peer discovery failed: %v", err)
+		}
+	}
+}
+
+func startSender(p2pNode *node.P2PNode) {
+	// TODO buffer size should be configurable in runtime
+	peers := make(chan *discovery.MDNSServiceEntry, 16)
+	go periodicallyDiscoverPeers(p2pNode, peers)
+	go func() {
+		fmt.Println("Peers: ")
+		for p := range peers {
+			name := strings.TrimSuffix(
+				p.Name,
+				"." + discovery.MDNSServiceName + "." + discovery.MDNSDomainName,
+			)
+
+			fmt.Printf("- %s: %s:%d\n", name, p.AddrV4, p.Port)
+		}
+	}()
+
 	for {
-		printToTerminal("Enter path to send to port %d: ", receiverPort)
+		printToTerminal("Enter file path: ")
 		reader := bufio.NewReader(os.Stdin)
 		input, _ := reader.ReadString('\n')
 		userInput := strings.TrimSpace(input)
@@ -124,11 +159,29 @@ func startSender(node *node.P2PNode, receiverPort int, receiverAddr *net.UDPAddr
 		switch userInput {
 		case "q", "quit", "exit":
 			os.Exit(0)
-		default:
-			err := node.SendFile(receiverAddr, userInput)
-			if err != nil {
-				printToTerminal("%v", err)
-			}
+		}
+
+		printToTerminal("Enter peer IP:PORT: ")
+		input, _ = reader.ReadString('\n')
+		peerInput := strings.TrimSpace(input)
+		parts := strings.Split(peerInput, ":")
+		ip := parts[0]
+		port, err := strconv.Atoi(parts[1])
+		if err != nil {
+			fmt.Printf("port parse err: %v\n", err)
+			continue
+		}
+
+		receiverAddr, err := node.CreateUDPAddress(ip, port)
+		if err != nil {
+			fmt.Printf("receive upd addres creation err: %v\n", err)
+			continue
+		}
+
+		err = p2pNode.SendFile(receiverAddr, userInput)
+		if err != nil {
+			fmt.Printf("send file err: %v\n", err)
+			continue
 		}
 	}
 }
@@ -138,8 +191,8 @@ func startReceiver() {
 }
 
 // Run the commands in two terminals:
-// go run cmd/test/main.go --sender=true
 // go run cmd/test/main.go --sender=false > tmp/listener.txt
+// go run cmd/test/main.go --sender=true > tmp/sender.txt 2> >(grep -v "mdns:")
 // source: cmd/test/file.txt
 // destination: tmp/file.txt
 func main() {
@@ -167,7 +220,11 @@ func main() {
 		log.Fatalf("node creation failed: %v\n", err)
 	}
 
-	node.RegisterEventHandler(eventHandler(node))
+	err = node.RegisterEventHandler(eventHandler(node))
+	if err != nil {
+		log.Fatalf("node event handler registration failed: %v\n", err)
+	}
+
 	defer node.Cleanup()
 
 	err = node.Start()
@@ -176,7 +233,7 @@ func main() {
 	}
 
 	if *isSender {
-		startSender(node, PORT_2, addr2)
+		startSender(node)
 	} else {
 		startReceiver()
 	}
