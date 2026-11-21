@@ -1,7 +1,6 @@
 package main
 
 import (
-	"airlink/internal/discovery"
 	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/node"
@@ -116,43 +115,27 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 	}
 }
 
-func periodicallyDiscoverPeers(node *node.P2PNode, peers chan discovery.PeerRecord) {
-    ticker := time.NewTicker(1 * time.Second)
-    defer ticker.Stop()
-
-    for {
-        discoveredPeerRecords, err := node.DiscoverPeers()
-        if err != nil {
-            log.Printf("peer discovery failed: %v", err)
-        }
-
-        for _, record := range discoveredPeerRecords {
-            select {
-            case peers <- record:
-            default:
-            }
-        }
-
-        <-ticker.C
-    }
-}
-
 func startSender(p2pNode *node.P2PNode) {
-    peers := make(chan discovery.PeerRecord, 16)
-    go periodicallyDiscoverPeers(p2pNode, peers)
-    go func() {
-        fmt.Println("Peers: ")
+    p2pNode.StartPeerDiscovery(1 * time.Second)
+	defer p2pNode.StopPeerDiscovery()
 
-        for record := range peers {
-			peer := record.Peer
-            fmt.Printf(
-				"| %s: %s | First seen: %s | Last seen: %s |\n",
-				peer.Name,
-				peer.Address,
-				record.FirstSeenAt,
-				record.LastSeenAt,
-			)
-        }
+    go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+        fmt.Println("Peers: ")
+		for {
+			for _, record := range p2pNode.GetPeers() {
+				peer := record.Peer
+				fmt.Printf(
+					"| %s: %s | First seen: %s | Last seen: %s |\n",
+					peer.Name,
+					peer.Address,
+					record.FirstSeenAt,
+					record.LastSeenAt,
+				)
+			}
+		}
     }()
 
 	for {
