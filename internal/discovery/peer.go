@@ -10,8 +10,16 @@ type Peer struct {
 	Address *net.UDPAddr
 }
 
-type Discovery interface {
+type Advertiser interface {
 	Start() error
 	Stop() error
+}
+
+type Querier interface {
 	Discover() ([]Peer, error)
+}
+
+type Discovery interface {
+	Advertiser
+	Querier
 }
