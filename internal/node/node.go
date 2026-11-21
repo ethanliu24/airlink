@@ -45,7 +45,7 @@ func (n *P2PNode) Start() error {
 		return err
 	}
 
-	err = n.peerManager.Start()
+	err = n.GoOnline()
 	if err != nil {
 		n.receiver.Cleanup()
 		return err
@@ -56,6 +56,14 @@ func (n *P2PNode) Start() error {
 
 func (n *P2PNode) NodeID() discovery.PeerId {
 	return n.nodeId
+}
+
+func (n *P2PNode) GoOnline() error {
+	return n.peerManager.Start()
+}
+
+func (n *P2PNode) GoOffline() error {
+	return n.peerManager.Stop()
 }
 
 func (n *P2PNode) GetPeers() []discovery.PeerRecord {
