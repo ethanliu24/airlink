@@ -19,7 +19,7 @@ var (
 const (
 	MDNSServiceName       = "_airlink._udp"
 	MDNSDomainName        = "local."
-	mdnsEntriesBufferSize = 64
+	mdnsEntriesBufferSize = 64 // TODO make this configurable and changable during runtime
 )
 
 type DiscoveryMDNSFunc func(*net.UDPAddr) (Discovery, error)
@@ -80,46 +80,75 @@ func (d *MDNSDiscovery) Stop() error {
 	return nil
 }
 
-func isAirlinkServiceEntry(entry *MDNSServiceEntry) bool {
-    if entry == nil {
-        return false
+func (d *MDNSDiscovery) Discover() ([]Peer, error) {
+    entries := make(chan *MDNSServiceEntry, mdnsEntriesBufferSize)
+    lookupDone := make(chan error, 1)
+
+    go func() {
+        err := d.lookup(MDNSServiceName, entries)
+        close(entries)
+        lookupDone <- err
+    }()
+
+    peers := make([]Peer, 0)
+    for entry := range entries {
+        peer, ok := mdnsEntryToPeer(entry)
+        if !ok {
+            continue
+        }
+
+        peers = append(peers, *peer)
     }
 
-    serviceSuffix := "." +
+    err := <-lookupDone
+
+    return peers, err
+}
+
+func mdnsInstanceName(name string) (string, bool) {
+    suffix :=
+		"." +
         strings.TrimSuffix(MDNSServiceName, ".") + "." +
         strings.TrimSuffix(MDNSDomainName, ".") + "."
 
-    return strings.HasSuffix(
-        strings.ToLower(entry.Name),
-        strings.ToLower(serviceSuffix),
-    )
+    if len(name) <= len(suffix) {
+        return "", false
+    }
+
+    if !strings.EqualFold(name[len(name)-len(suffix):], suffix) {
+        return "", false
+    }
+
+    return name[:len(name)-len(suffix)], true
 }
 
-func (d *MDNSDiscovery) Discover(entries chan *MDNSServiceEntry) error {
-	discoveredEntries := make(chan *MDNSServiceEntry, mdnsEntriesBufferSize)
-	filterDone := make(chan struct{})
+func mdnsEntryToPeer(entry *MDNSServiceEntry) (*Peer, bool) {
+    if entry == nil {
+        return nil, false
+    }
 
-	go func() {
-		defer close(filterDone)
+    name, ok := mdnsInstanceName(entry.Name)
+    if !ok {
+        return nil, false
+    }
 
-		for entry := range discoveredEntries {
-			if !isAirlinkServiceEntry(entry) {
-				continue
-			}
+    // Prefer IPv4, falling back to IPv6.
+    ip := entry.AddrV4
+    if len(ip) == 0 {
+        ip = entry.AddrV6
+    }
 
-			select {
-			case entries <- entry:
-			default:
-			}
-		}
-	}()
+    if len(ip) == 0 {
+        return nil, false
+    }
 
-	err := d.lookup(MDNSServiceName, discoveredEntries)
-
-	close(discoveredEntries)
-	<-filterDone
-
-	return err
+    return &Peer{
+        Name: name,
+        Address: &net.UDPAddr{
+            IP:   append(net.IP(nil), ip...),
+            Port: entry.Port,
+        },
+    }, true
 }
 
 func NewMDNSDiscovery(

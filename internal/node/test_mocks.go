@@ -125,19 +125,23 @@ func (l *mockListener) Close() error {
 }
 
 type mockMDNSDiscovery struct {
-	start    func() error
-	stop     func() error
-	discover func(chan *discovery.MDNSServiceEntry) error
+    start    func() error
+    stop     func() error
+    discover func() ([]discovery.Peer, error)
 }
 
 func (d *mockMDNSDiscovery) Start() error {
-	return d.start()
+    return d.start()
 }
 
 func (d *mockMDNSDiscovery) Stop() error {
-	return d.stop()
+    return d.stop()
 }
 
-func (d *mockMDNSDiscovery) Discover(entries chan *discovery.MDNSServiceEntry) error {
-	return d.discover(entries)
+func (d *mockMDNSDiscovery) Discover() ([]discovery.Peer, error) {
+    if d.discover == nil {
+        return nil, nil
+    }
+
+    return d.discover()
 }

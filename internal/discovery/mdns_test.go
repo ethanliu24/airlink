@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"errors"
+	"net"
 	"testing"
 
 	"github.com/hashicorp/mdns"
@@ -79,26 +80,99 @@ func TestMDNSDiscoveryStopCanRetryAfterShutdownFailure(t *testing.T) {
 	assert.Equal(t, 2, server.shutdownCalls)
 }
 
-func TestMDNSDiscoveryDiscoverForwardsValidEntries(t *testing.T) {
-    expected := &MDNSServiceEntry{
-        Name: "SomeDevice._airlink._udp.local.",
-    }
-
+func TestMDNSDiscoveryDiscoverConvertsEntriesToPeers(t *testing.T) {
     discovery := newMDNSDiscovery(
         &mdns.MDNSService{},
         nil,
-        func(service string, discovered chan *MDNSServiceEntry) error {
-            discovered <- expected
+        func(service string, entries chan *MDNSServiceEntry) error {
+            assert.Equal(t, MDNSServiceName, service)
+
+            entries <- &MDNSServiceEntry{
+                Name:   "SomeDevice._airlink._udp.local.",
+                AddrV4: net.ParseIP("192.0.2.10"),
+                AddrV6: net.ParseIP("2001:db8::1"),
+                Port:   1111,
+            }
+
             return nil
         },
     )
 
-    entries := make(chan *MDNSServiceEntry, 1)
+    peers, err := discovery.Discover()
 
-    require.NoError(t, discovery.Discover(entries))
+    require.NoError(t, err)
+    require.Len(t, peers, 1)
 
-    require.Len(t, entries, 1)
-    assert.Same(t, expected, <-entries)
+    assert.Equal(t, Peer{
+        Name: "SomeDevice",
+        Address: &net.UDPAddr{
+            IP:   net.ParseIP("192.0.2.10"),
+            Port: 1111,
+        },
+    }, peers[0])
+}
+
+func TestMDNSDiscoveryDiscoverFallsBackToIPv6(t *testing.T) {
+    discovery := newMDNSDiscovery(
+        &mdns.MDNSService{},
+        nil,
+        func(string, chan *MDNSServiceEntry) error {
+            return nil
+        },
+    )
+
+    // Use a separate test to supply the IPv6 entry.
+    discovery.lookup = func(_ string, entries chan *MDNSServiceEntry) error {
+        entries <- &MDNSServiceEntry{
+            Name:   "SomeDevice._airlink._udp.local.",
+            AddrV6: net.ParseIP("2001:db8::1"),
+            Port:   1111,
+        }
+        return nil
+    }
+
+    peers, err := discovery.Discover()
+
+    require.NoError(t, err)
+    require.Len(t, peers, 1)
+
+    assert.Equal(t, net.ParseIP("2001:db8::1"), peers[0].Address.IP)
+    assert.Equal(t, 1111, peers[0].Address.Port)
+}
+
+func TestMDNSDiscoveryDiscoverFiltersInvalidEntries(t *testing.T) {
+    discovery := newMDNSDiscovery(
+        &mdns.MDNSService{},
+        nil,
+        func(_ string, entries chan *MDNSServiceEntry) error {
+            entries <- nil
+
+            entries <- &MDNSServiceEntry{
+                Name: "SomeDevice._airplay._tcp.local.",
+                AddrV4: net.ParseIP("192.0.2.10"),
+                Port: 1111,
+            }
+
+            entries <- &MDNSServiceEntry{
+                Name: "SomeDevice._airlink._tcp.local.",
+                AddrV4: net.ParseIP("192.0.2.10"),
+                Port: 1111,
+            }
+
+            // Valid Airlink service, but no usable address.
+            entries <- &MDNSServiceEntry{
+                Name: "NoAddress._airlink._udp.local.",
+                Port: 1111,
+            }
+
+            return nil
+        },
+    )
+
+    peers, err := discovery.Discover()
+
+    require.NoError(t, err)
+    assert.Empty(t, peers)
 }
 
 func TestMDNSDiscoveryDiscoverReturnsLookupError(t *testing.T) {
@@ -112,17 +186,23 @@ func TestMDNSDiscoveryDiscoverReturnsLookupError(t *testing.T) {
         },
     )
 
-    err := discovery.Discover(make(chan *MDNSServiceEntry))
+    peers, err := discovery.Discover()
 
     require.ErrorIs(t, err, lookupErr)
+    assert.Empty(t, peers)
 }
 
 func TestMDNSDiscoveryDiscoverFiltersEntriesByService(t *testing.T) {
     airlinkEntry := &MDNSServiceEntry{
-        Name: "SomeDevice._airlink._udp.local.",
+        Name:   "SomeDevice._airlink._udp.local.",
+        AddrV4: net.ParseIP("192.0.2.10"),
+        Port:   1111,
     }
+
     uppercaseAirlinkEntry := &MDNSServiceEntry{
-        Name: "AnotherDevice._AIRLINK._UDP.LOCAL.",
+        Name:   "AnotherDevice._AIRLINK._UDP.LOCAL.",
+        AddrV4: net.ParseIP("192.0.2.20"),
+        Port:   2222,
     }
 
     lookupCalls := 0
@@ -152,13 +232,26 @@ func TestMDNSDiscoveryDiscoverFiltersEntriesByService(t *testing.T) {
         },
     )
 
-    entries := make(chan *MDNSServiceEntry, 2)
+    peers, err := discovery.Discover()
 
-    require.NoError(t, discovery.Discover(entries))
-
+    require.NoError(t, err)
     assert.Equal(t, 1, lookupCalls)
-    require.Equal(t, 2, len(entries))
 
-    assert.Same(t, airlinkEntry, <-entries)
-    assert.Same(t, uppercaseAirlinkEntry, <-entries)
+    require.Len(t, peers, 2)
+
+    assert.Equal(t, Peer{
+        Name: "SomeDevice",
+        Address: &net.UDPAddr{
+            IP:   net.ParseIP("192.0.2.10"),
+            Port: 1111,
+        },
+    }, peers[0])
+
+    assert.Equal(t, Peer{
+        Name: "AnotherDevice",
+        Address: &net.UDPAddr{
+            IP:   net.ParseIP("192.0.2.20"),
+            Port: 2222,
+        },
+    }, peers[1])
 }
