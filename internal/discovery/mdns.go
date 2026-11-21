@@ -17,12 +17,17 @@ var (
 )
 
 const (
-	MDNSServiceName       = "_airlink._udp"
-	MDNSDomainName        = "local."
+	MDNSServiceName           = "_airlink._udp"
+	MDNSDomainName            = "local."
+	MDNSPeerIDTXTKey          = "airlink-id"
+	MDNSProtocolVersionTXTKey = "airlink-mdns-version"
+	MDNSPeerNameTXTKey        = "airlink-name"
+	AirlinkProtocolVersion    = "1" // TODO unify this version thing somewhere
+
 	mdnsEntriesBufferSize = 64 // TODO make this configurable and changable during runtime
 )
 
-type DiscoveryMDNSFunc func(*net.UDPAddr) (Discovery, error)
+type DiscoveryMDNSFunc func(*net.UDPAddr, PeerId) (Discovery, error)
 
 type mdnsServer interface {
 	Shutdown() error
@@ -81,74 +86,111 @@ func (d *MDNSDiscovery) Stop() error {
 }
 
 func (d *MDNSDiscovery) Discover() ([]Peer, error) {
-    entries := make(chan *MDNSServiceEntry, mdnsEntriesBufferSize)
-    lookupDone := make(chan error, 1)
+	entries := make(chan *MDNSServiceEntry, mdnsEntriesBufferSize)
+	lookupDone := make(chan error, 1)
 
-    go func() {
-        err := d.lookup(MDNSServiceName, entries)
-        close(entries)
-        lookupDone <- err
-    }()
+	go func() {
+		err := d.lookup(MDNSServiceName, entries)
+		close(entries)
+		lookupDone <- err
+	}()
 
-    peers := make([]Peer, 0)
-    for entry := range entries {
-        peer, ok := mdnsEntryToPeer(entry)
-        if !ok {
-            continue
-        }
+	peers := make([]Peer, 0)
+	for entry := range entries {
+		peer, ok := mdnsEntryToPeer(entry)
+		if !ok {
+			continue
+		}
 
-        peers = append(peers, *peer)
-    }
+		peers = append(peers, *peer)
+	}
 
-    err := <-lookupDone
+	err := <-lookupDone
 
-    return peers, err
+	return peers, err
 }
 
-func mdnsInstanceName(name string) (string, bool) {
-    suffix :=
-		"." +
-        strings.TrimSuffix(MDNSServiceName, ".") + "." +
-        strings.TrimSuffix(MDNSDomainName, ".") + "."
+func mdnsTXTValue(fields []string, key string) (string, bool) {
+	var value string
+	found := false
 
-    if len(name) <= len(suffix) {
-        return "", false
-    }
+	for _, field := range fields {
+		fieldKey, fieldValue, ok := strings.Cut(field, "=")
+		if !ok || !strings.EqualFold(fieldKey, key) {
+			continue
+		}
 
-    if !strings.EqualFold(name[len(name)-len(suffix):], suffix) {
-        return "", false
-    }
+		// Reject ambiguous duplicate metadata.
+		if found {
+			return "", false
+		}
 
-    return name[:len(name)-len(suffix)], true
+		value = fieldValue
+		found = true
+	}
+
+	return value, found
+}
+
+func isAirlinkServiceEntry(name string) bool {
+    name = strings.TrimSuffix(
+        strings.ToLower(strings.TrimSpace(name)),
+        ".",
+    )
+
+    serviceSuffix := "." +
+        strings.TrimSuffix(strings.ToLower(MDNSServiceName), ".") +
+        "." +
+        strings.TrimSuffix(strings.ToLower(MDNSDomainName), ".")
+
+    return strings.HasSuffix(name, serviceSuffix)
 }
 
 func mdnsEntryToPeer(entry *MDNSServiceEntry) (*Peer, bool) {
-    if entry == nil {
+	if entry == nil || !isAirlinkServiceEntry(entry.Name) {
         return nil, false
     }
 
-    name, ok := mdnsInstanceName(entry.Name)
-    if !ok {
-        return nil, false
-    }
+	name, ok := mdnsTXTValue(entry.InfoFields, MDNSPeerNameTXTKey)
+	if !ok || strings.TrimSpace(name) == "" {
+		return nil, false
+	}
 
-    // Prefer IPv4, falling back to IPv6.
-    ip := entry.AddrV4
-    if len(ip) == 0 {
-        ip = entry.AddrV6
-    }
+	id, ok := mdnsTXTValue(entry.InfoFields, MDNSPeerIDTXTKey)
+	if !ok || strings.TrimSpace(id) == "" {
+		return nil, false
+	}
 
-    if len(ip) == 0 {
-        return nil, false
-    }
+	version, ok := mdnsTXTValue(entry.InfoFields, MDNSProtocolVersionTXTKey)
+	if !ok || version != AirlinkProtocolVersion {
+		return nil, false
+	}
 
-    return &Peer{
-        Name: name,
-        Address: &net.UDPAddr{
-            IP:   append(net.IP(nil), ip...),
-            Port: entry.Port,
-        },
-    }, true
+	// Prefer IPv4, falling back to IPv6.
+	ip := entry.AddrV4
+	zone := ""
+
+	if len(ip) == 0 {
+		ip = entry.AddrV6
+
+		if entry.AddrV6IPAddr != nil {
+			zone = entry.AddrV6IPAddr.Zone
+		}
+	}
+
+	if len(ip) == 0 || entry.Port <= 0 || entry.Port > 65535 {
+		return nil, false
+	}
+
+	return &Peer{
+		Id:   PeerId(id),
+		Name: name,
+		Address: &net.UDPAddr{
+			IP:   append(net.IP(nil), ip...),
+			Port: entry.Port,
+			Zone: zone,
+		},
+	}, true
 }
 
 func NewMDNSDiscovery(

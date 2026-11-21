@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 
 	"github.com/quic-go/quic-go"
 )
@@ -17,6 +18,7 @@ import (
 const IP_ADDRESS = "127.0.0.1"
 
 type P2PNode struct {
+	nodeId          discovery.PeerId
 	addr            net.Addr
 	transport       *quic.Transport
 	tlsConfig       *tls.Config
@@ -49,33 +51,27 @@ func (n *P2PNode) Start() error {
 	return nil
 }
 
+func (n *P2PNode) NodeID() discovery.PeerId {
+	return n.nodeId
+}
+
 func (n *P2PNode) isSelf(peer discovery.Peer) bool {
-    if peer.Address == nil {
-        return false
-    }
-
-    localAddr, ok := n.addr.(*net.UDPAddr)
-    if !ok || localAddr == nil {
-        return false
-    }
-
-    return peer.Address.Port == localAddr.Port && peer.Address.IP.Equal(localAddr.IP)
+    return peer.Id != "" && peer.Id == n.nodeId
 }
 
 func (n *P2PNode) DiscoverPeers() ([]discovery.Peer, error) {
-    discoveredPeers, err := n.mdnsDiscovery.Discover()
+	discoveredPeers, err := n.mdnsDiscovery.Discover()
 
-    peers := make([]discovery.Peer, 0, len(discoveredPeers))
+	peers := make([]discovery.Peer, 0, len(discoveredPeers))
+	for _, peer := range discoveredPeers {
+		if n.isSelf(peer) {
+			continue
+		}
 
-    for _, peer := range discoveredPeers {
-        if n.isSelf(peer) {
-            continue
-        }
+		peers = append(peers, peer)
+	}
 
-        peers = append(peers, peer)
-    }
-
-    return peers, err
+	return peers, err
 }
 
 func (n *P2PNode) SendFile(receiverAddr *net.UDPAddr, filename string) error {
@@ -112,20 +108,31 @@ func NewP2PNode(addr *net.UDPAddr) (*P2PNode, error) {
 	return newP2PNode(addr, net.ListenUDP, file.OpenReader, newMDNSDiscovery)
 }
 
-func newMDNSDiscovery(addr *net.UDPAddr) (discovery.Discovery, error) {
+func newMDNSDiscovery(addr *net.UDPAddr, id discovery.PeerId) (discovery.Discovery, error) {
 	hostName, err := os.Hostname()
 	if err != nil {
 		return nil, err
 	}
 
+	displayName := strings.TrimSuffix(hostName, ".")
+    displayName = strings.TrimSuffix(displayName, ".local")
+
+    uniqueInstanceName := "Airlink-" + string(id)
+
+	info := []string{
+        discovery.MDNSPeerIDTXTKey + "=" + string(id),
+		discovery.MDNSPeerNameTXTKey + "=" + displayName,
+        discovery.MDNSProtocolVersionTXTKey + "=" + discovery.AirlinkProtocolVersion,
+    }
+
 	return discovery.NewMDNSDiscovery(
-		hostName,
+		uniqueInstanceName,
 		discovery.MDNSServiceName,
 		discovery.MDNSDomainName,
 		"", // Let the library determine the host FQDN.
 		addr.Port,
 		[]net.IP{addr.IP}, // Advertise the actual listening IP.
-		nil,
+		info,
 	)
 }
 
@@ -146,7 +153,14 @@ func newP2PNode(
 		boundAddr = localAddr
 	}
 
-	mdnsDiscovery, err := discoverMDNS(boundAddr)
+	// TODO store the id after, use the already generated id, and fallback to generation only if no id
+	id, err := generateNodeId()
+	if err != nil {
+		slog.Error("could not create node id", "err", err)
+		return nil, err
+	}
+
+	mdnsDiscovery, err := discoverMDNS(boundAddr, id)
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +176,7 @@ func newP2PNode(
 	sender := newSender(transport, boundAddr, transferManager.Send)
 
 	return &P2PNode{
+		nodeId:          id,
 		addr:            boundAddr,
 		tlsConfig:       tlsConfig,
 		quicConfig:      quicConfig,
