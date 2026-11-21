@@ -116,38 +116,37 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 	}
 }
 
-func periodicallyDiscoverPeers(node *node.P2PNode, entries chan *discovery.MDNSServiceEntry) {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+func periodicallyDiscoverPeers(node *node.P2PNode, peers chan discovery.Peer) {
+    ticker := time.NewTicker(1 * time.Second)
+    defer ticker.Stop()
 
-	for range ticker.C {
-		done := make(chan error, 1)
+    for {
+        discoveredPeers, err := node.DiscoverPeers()
+        if err != nil {
+            log.Printf("peer discovery failed: %v", err)
+        }
 
-		go func() {
-			err := node.DiscoverPeers(entries)
-			done <- err
-		}()
+        for _, peer := range discoveredPeers {
+            select {
+            case peers <- peer:
+            default:
+            }
+        }
 
-		if err := <-done; err != nil {
-			log.Printf("peer discovery failed: %v", err)
-		}
-	}
+        <-ticker.C
+    }
 }
 
 func startSender(p2pNode *node.P2PNode) {
-	peers := make(chan *discovery.MDNSServiceEntry, 16)
-	go periodicallyDiscoverPeers(p2pNode, peers)
-	go func() {
-		fmt.Println("Peers: ")
-		for p := range peers {
-			name := strings.TrimSuffix(
-				p.Name,
-				"." + discovery.MDNSServiceName + "." + discovery.MDNSDomainName,
-			)
+    peers := make(chan discovery.Peer, 16)
+    go periodicallyDiscoverPeers(p2pNode, peers)
+    go func() {
+        fmt.Println("Peers: ")
 
-			fmt.Printf("- %s: %s:%d\n", name, p.AddrV4, p.Port)
-		}
-	}()
+        for p := range peers {
+            fmt.Printf("- %s: %s\n", p.Name, p.Address)
+        }
+    }()
 
 	for {
 		printToTerminal("Enter file path: ")

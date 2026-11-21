@@ -203,97 +203,132 @@ func TestP2PNodeStartDoesNotAdvertiseWhenListeningFails(t *testing.T) {
 }
 
 func TestP2PNodePeerDiscovery(t *testing.T) {
-	t.Parallel()
+    t.Parallel()
 
-	t.Run("populates entries channel", func(t *testing.T) {
-		addr, err := toUDPAddress(NODE_TEST_IP, 1234)
-		require.NoError(t, err)
+    expected := []discovery.Peer{
+        {
+            Name: "Test",
+            Address: &net.UDPAddr{
+                IP:   net.ParseIP("192.0.2.20"),
+                Port: 1234,
+            },
+        },
+    }
 
-		entries := make(chan *discovery.MDNSServiceEntry, 1)
-		node, err := newP2PNode(
-			addr,
-			mockListen,
-			mockOpenReader,
-			func(_ *net.UDPAddr) (discovery.Discovery, error) {
-				return &mockMDNSDiscovery{
-					start: func() error { return nil },
-					stop:  func() error { return nil },
-					discover: func(c chan *discovery.MDNSServiceEntry) error {
-						c <-&discovery.MDNSServiceEntry{Name: "Test"}
-						return nil
-					},
-				}, nil
-			},
-		)
+    node, err := newP2PNode(
+        &net.UDPAddr{
+            IP:   net.ParseIP(NODE_TEST_IP),
+            Port: 1234,
+        },
+        mockListen,
+        mockOpenReader,
+        func(_ *net.UDPAddr) (discovery.Discovery, error) {
+            return &mockMDNSDiscovery{
+                start: func() error { return nil },
+                stop:  func() error { return nil },
+                discover: func() ([]discovery.Peer, error) {
+                    return expected, nil
+                },
+            }, nil
+        },
+    )
 
-		require.NoError(t, err)
+    require.NoError(t, err)
 
-		node.DiscoverPeers(entries)
+    peers, err := node.DiscoverPeers()
 
-		assert.Equal(t, len(entries), 1)
-		assert.Equal(t, (<-entries).Name, "Test")
-	})
+    require.NoError(t, err)
+    require.Equal(t, expected, peers)
+
+    t.Cleanup(node.Cleanup)
 }
 
 func TestP2PNodeDiscoverPeersFiltersSelfAndForwardsOtherPeers(t *testing.T) {
-	localAddr := &net.UDPAddr{
-		IP:   net.ParseIP("192.0.2.10"),
-		Port: 1111,
-	}
+    localAddr := &net.UDPAddr{
+        IP:   net.ParseIP("192.0.2.10"),
+        Port: 1111,
+    }
 
-	self := &discovery.MDNSServiceEntry{
-		Name:   "self",
-		AddrV4: localAddr.IP,
-		Port:   localAddr.Port,
-	}
+    discoveredPeers := []discovery.Peer{
+        {
+            Name: "self",
+            Address: &net.UDPAddr{
+                IP:   localAddr.IP,
+                Port: localAddr.Port,
+            },
+        },
+        {
+            Name: "different-ip",
+            Address: &net.UDPAddr{
+                IP:   net.ParseIP("192.0.2.20"),
+                Port: 1111,
+            },
+        },
+        {
+            Name: "different-port",
+            Address: &net.UDPAddr{
+                IP:   localAddr.IP,
+                Port: 2222,
+            },
+        },
+        {
+            Name: "ipv6-peer",
+            Address: &net.UDPAddr{
+                IP:   net.ParseIP("2001:db8::2"),
+                Port: 1111,
+            },
+        },
+        {
+            Name: "no-address",
+        },
+    }
 
-	differentIP := &discovery.MDNSServiceEntry{
-		Name:   "different-ip",
-		AddrV4: net.ParseIP("192.0.2.20"),
-		Port:   1111,
-	}
+    p2pNode := &P2PNode{
+        addr: localAddr,
+        mdnsDiscovery: &mockMDNSDiscovery{
+            discover: func() ([]discovery.Peer, error) {
+                return discoveredPeers, nil
+            },
+        },
+    }
 
-	differentPort := &discovery.MDNSServiceEntry{
-		Name:   "different-port",
-		AddrV4: localAddr.IP,
-		Port:   2222,
-	}
+    peers, err := p2pNode.DiscoverPeers()
 
-	ipv6Peer := &discovery.MDNSServiceEntry{
-		Name:   "ipv6-peer",
-		AddrV6: net.ParseIP("2001:db8::2"),
-		Port:   1111,
-	}
+    require.NoError(t, err)
+    require.Len(t, peers, 4)
 
-	discoveredEntries := []*discovery.MDNSServiceEntry{
-		nil,
-		self,
-		differentIP,
-		differentPort,
-		ipv6Peer,
-	}
+    assert.Equal(t, "different-ip", peers[0].Name)
+    assert.Equal(t, "different-port", peers[1].Name)
+    assert.Equal(t, "ipv6-peer", peers[2].Name)
+    assert.Equal(t, "no-address", peers[3].Name)
+}
 
-	p2pNode := &P2PNode{
-		addr: localAddr,
-		mdnsDiscovery: &mockMDNSDiscovery{
-			discover: func(entries chan *discovery.MDNSServiceEntry) error {
-				for _, entry := range discoveredEntries {
-					entries <- entry
-				}
-				return nil
-			},
-		},
-	}
+func TestP2PNodeDiscoverPeersReturnsDiscoveryError(t *testing.T) {
+    discoveryErr := errors.New("discovery failed")
 
-	peers := make(chan *discovery.MDNSServiceEntry, len(discoveredEntries))
+    expected := []discovery.Peer{
+        {
+            Name: "peer",
+            Address: &net.UDPAddr{
+                IP:   net.ParseIP("192.0.2.20"),
+                Port: 1234,
+            },
+        },
+    }
 
-	require.NoError(t, p2pNode.DiscoverPeers(peers))
+    p2pNode := &P2PNode{
+        addr: testAddr(),
+        mdnsDiscovery: &mockMDNSDiscovery{
+            discover: func() ([]discovery.Peer, error) {
+                return expected, discoveryErr
+            },
+        },
+    }
 
-	require.Len(t, peers, 3)
+    peers, err := p2pNode.DiscoverPeers()
 
-	assert.Same(t, differentIP, <-peers)
-	assert.Same(t, differentPort, <-peers)
-	assert.Same(t, ipv6Peer, <-peers)
+    require.ErrorIs(t, err, discoveryErr)
+    assert.Equal(t, expected, peers)
 }
 
 func TestRegisterEventHandler(t *testing.T) {
