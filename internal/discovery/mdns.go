@@ -56,7 +56,7 @@ func (d *MDNSDiscovery) Start() error {
 	}
 
 	if d.server != nil {
-		return ErrMDNSDiscoveryStarted
+		return nil
 	}
 
 	server, err := d.newServer(&mdns.Config{Zone: d.service})

@@ -45,7 +45,7 @@ func TestMDNSDiscoveryStartStopLifecycle(t *testing.T) {
 
 	require.NoError(t, discovery.Stop(), "stopping before start must be safe")
 	require.NoError(t, discovery.Start())
-	require.ErrorIs(t, discovery.Start(), ErrMDNSDiscoveryStarted)
+	require.NoError(t, discovery.Start(), "starting twice must be safe")
 	require.NoError(t, discovery.Stop())
 	require.NoError(t, discovery.Stop(), "stopping twice must be safe")
 
