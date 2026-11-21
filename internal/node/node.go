@@ -11,11 +11,11 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/quic-go/quic-go"
 )
-
-const IP_ADDRESS = "127.0.0.1"
 
 type P2PNode struct {
 	nodeId          discovery.PeerId
@@ -28,6 +28,9 @@ type P2PNode struct {
 	eventManager    *event.Manager
 	transferManager *transfer.Manager
 	peerManager     *discovery.PeerManager
+
+	cancelPeerDiscovery context.CancelFunc
+	discoveryMu         sync.Mutex
 }
 
 func (n *P2PNode) listen() error {
@@ -55,15 +58,46 @@ func (n *P2PNode) NodeID() discovery.PeerId {
 	return n.nodeId
 }
 
-func (n *P2PNode) DiscoverPeers() ([]discovery.PeerRecord, error) {
-	discoveredPeers, err := n.peerManager.Discover()
+func (n *P2PNode) GetPeers() []discovery.PeerRecord {
+	return n.peerManager.GetPeers()
+}
 
-	records := make([]discovery.PeerRecord, 0, len(discoveredPeers))
-	for _, record := range discoveredPeers {
-		records = append(records, record)
+func (n *P2PNode) StartPeerDiscovery(pollingFrequency time.Duration) {
+	n.discoveryMu.Lock()
+
+	if n.cancelPeerDiscovery != nil {
+		n.cancelPeerDiscovery()
 	}
 
-	return records, err
+	ctx, cancel := context.WithCancel(context.Background())
+	n.cancelPeerDiscovery = cancel
+
+	n.discoveryMu.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(pollingFrequency)
+		defer ticker.Stop()
+
+		outer:
+		for {
+			select {
+			case <-ticker.C:
+				n.peerManager.Discover() // TODO if err then log
+			case <-ctx.Done():
+				break outer
+			}
+		}
+	}()
+}
+
+func (n *P2PNode) StopPeerDiscovery() {
+	n.discoveryMu.Lock()
+	defer n.discoveryMu.Unlock()
+
+	if n.cancelPeerDiscovery != nil {
+		n.cancelPeerDiscovery()
+		n.cancelPeerDiscovery = nil
+	}
 }
 
 func (n *P2PNode) SendFile(receiverAddr *net.UDPAddr, filename string) error {

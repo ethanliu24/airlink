@@ -1,4 +1,3 @@
-
 package node
 
 import (
@@ -12,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -245,7 +245,8 @@ func TestP2PNodePeerDiscovery(t *testing.T) {
 
 	require.NoError(t, err)
 
-	records, err := node.DiscoverPeers()
+	node.peerManager.Discover()
+	records := node.GetPeers()
 
 	require.NoError(t, err)
 	require.Len(t, records, 1)
@@ -257,91 +258,13 @@ func TestP2PNodePeerDiscovery(t *testing.T) {
 	t.Cleanup(node.Cleanup)
 }
 
-func TestP2PNodeDiscoverPeersFiltersSelfAndForwardsOtherPeers(t *testing.T) {
-	localAddr := &net.UDPAddr{
-		IP:   net.ParseIP("192.0.2.10"),
-		Port: 1111,
-	}
-
-	nodeID := discovery.PeerId("self-id")
-
-	discoveredPeers := []discovery.Peer{
-		{
-			Id:      nodeID,
-			Name:    "self",
-			Address: localAddr,
-		},
-		{
-			Id:      discovery.PeerId("peer-1"),
-			Name:    "peer-1",
-			Address: localAddr,
-		},
-		{
-			Id:      discovery.PeerId("peer-2"),
-			Name:    "peer-2",
-			Address: localAddr,
-		},
-		{
-			Id:      discovery.PeerId("peer-3"),
-			Name:    "peer-3",
-			Address: localAddr,
-		},
-	}
+func TestP2PNodeStartPeerDiscovery(t *testing.T) {
+	var discoverCalls atomic.Int32
 
 	mdns := &mockMDNSDiscovery{
 		discover: func() ([]discovery.Peer, error) {
-			return discoveredPeers, nil
-		},
-	}
-
-	peerManager, err := discovery.NewPeerManager(nodeID, mdns)
-	require.NoError(t, err)
-
-	p2pNode := &P2PNode{
-		nodeId:      nodeID,
-		addr:        localAddr,
-		peerManager: peerManager,
-	}
-
-	records, err := p2pNode.DiscoverPeers()
-
-	require.NoError(t, err)
-	require.Len(t, records, 3)
-
-	gotIDs := make([]discovery.PeerId, 0, len(records))
-	for _, record := range records {
-		gotIDs = append(gotIDs, record.Peer.Id)
-	}
-
-	assert.ElementsMatch(t, []discovery.PeerId{
-		"peer-1",
-		"peer-2",
-		"peer-3",
-	}, gotIDs)
-}
-
-func TestP2PNodeDiscoverPeersReturnsDiscoveryError(t *testing.T) {
-	discoveryErr := errors.New("discovery failed")
-
-	discoverCalls := 0
-	expected := discovery.Peer{
-		Id:   discovery.PeerId("peer-1"),
-		Name: "peer",
-		Address: &net.UDPAddr{
-			IP:   net.ParseIP("192.0.2.20"),
-			Port: 1234,
-		},
-	}
-
-	mdns := &mockMDNSDiscovery{
-		discover: func() ([]discovery.Peer, error) {
-			discoverCalls++
-
-			if discoverCalls == 1 {
-				return []discovery.Peer{expected}, nil
-			}
-
-			return nil, discoveryErr
+			discoverCalls.Add(1)
+			return nil, nil
 		},
 	}
 
@@ -351,23 +274,76 @@ func TestP2PNodeDiscoverPeersReturnsDiscoveryError(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	p2pNode := &P2PNode{
+	node := &P2PNode{
 		peerManager: peerManager,
 	}
 
-	records, err := p2pNode.DiscoverPeers()
+	// Start with a long interval so no discovery happens yet.
+	node.StartPeerDiscovery(time.Hour)
 
+	// Starting again should replace the previous polling loop.
+	restarted := make(chan struct{})
+
+	go func() {
+		node.StartPeerDiscovery(10 * time.Millisecond)
+		close(restarted)
+	}()
+
+	select {
+	case <-restarted:
+	case <-time.After(nodeTestTimeout):
+		t.Fatal("restarting peer discovery timed out")
+	}
+
+	t.Cleanup(node.StopPeerDiscovery)
+
+	// Verify the new polling loop performs discovery periodically.
+	require.Eventually(t, func() bool {
+		return discoverCalls.Load() >= 2
+	}, nodeTestTimeout, 5*time.Millisecond)
+}
+
+func TestP2PNodeStopPeerDiscovery(t *testing.T) {
+	var discoverCalls atomic.Int32
+
+	mdns := &mockMDNSDiscovery{
+		discover: func() ([]discovery.Peer, error) {
+			discoverCalls.Add(1)
+			return nil, nil
+		},
+	}
+
+	peerManager, err := discovery.NewPeerManager(
+		discovery.PeerId("local-node"),
+		mdns,
+	)
 	require.NoError(t, err)
-	require.Len(t, records, 1)
 
-	assert.Equal(t, expected, records[0].Peer)
+	node := &P2PNode{
+		peerManager: peerManager,
+	}
 
-	records, err = p2pNode.DiscoverPeers()
+	pollingFrequency := 100 * time.Millisecond
 
-	require.ErrorIs(t, err, discoveryErr)
-	require.Len(t, records, 1)
+	node.StartPeerDiscovery(pollingFrequency)
+	t.Cleanup(node.StopPeerDiscovery)
 
-	assert.Equal(t, expected, records[0].Peer)
+	// Wait until the first discovery happens.
+	require.Eventually(t, func() bool {
+		return discoverCalls.Load() >= 1
+	}, nodeTestTimeout, 5*time.Millisecond)
+
+	node.StopPeerDiscovery()
+
+	callsAfterStop := discoverCalls.Load()
+
+	// Wait several polling intervals and verify no more discoveries occur.
+	time.Sleep(3 * pollingFrequency)
+
+	assert.Equal(t, callsAfterStop, discoverCalls.Load())
+
+	// Stopping again should be safe.
+	node.StopPeerDiscovery()
 }
 
 func TestRegisterEventHandler(t *testing.T) {
@@ -456,49 +432,4 @@ func TestNewP2PNodesHaveDifferentIDs(t *testing.T) {
 	t.Cleanup(node2.Cleanup)
 
 	assert.NotEqual(t, node1.NodeID(), node2.NodeID())
-}
-
-func TestP2PNodeDiscoverPeersFiltersSelfByID(t *testing.T) {
-	localID := discovery.PeerId("local-node")
-	remoteID := discovery.PeerId("remote-node")
-
-	localAddr := &net.UDPAddr{
-		IP:   net.ParseIP("192.0.2.10"),
-		Port: 1111,
-	}
-
-	discoveredPeers := []discovery.Peer{
-		{
-			Id:      localID,
-			Name:    "self",
-			Address: localAddr,
-		},
-		{
-			Id:      remoteID,
-			Name:    "remote",
-			Address: localAddr,
-		},
-	}
-
-	mdns := &mockMDNSDiscovery{
-		discover: func() ([]discovery.Peer, error) {
-			return discoveredPeers, nil
-		},
-	}
-
-	peerManager, err := discovery.NewPeerManager(localID, mdns)
-	require.NoError(t, err)
-
-	p2pNode := &P2PNode{
-		nodeId:      localID,
-		peerManager: peerManager,
-	}
-
-	records, err := p2pNode.DiscoverPeers()
-
-	require.NoError(t, err)
-	require.Len(t, records, 1)
-
-	assert.Equal(t, remoteID, records[0].Peer.Id)
-	assert.Equal(t, "remote", records[0].Peer.Name)
 }
