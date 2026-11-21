@@ -27,7 +27,7 @@ const (
 	mdnsEntriesBufferSize = 64 // TODO make this configurable and changable during runtime
 )
 
-type DiscoveryMDNSFunc func(*net.UDPAddr, PeerId) (Discovery, error)
+type DiscoverMDNSFunc func(*net.UDPAddr, PeerId) (Discovery, error)
 
 type mdnsServer interface {
 	Shutdown() error

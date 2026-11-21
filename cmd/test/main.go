@@ -116,19 +116,19 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 	}
 }
 
-func periodicallyDiscoverPeers(node *node.P2PNode, peers chan discovery.Peer) {
+func periodicallyDiscoverPeers(node *node.P2PNode, peers chan discovery.PeerRecord) {
     ticker := time.NewTicker(1 * time.Second)
     defer ticker.Stop()
 
     for {
-        discoveredPeers, err := node.DiscoverPeers()
+        discoveredPeerRecords, err := node.DiscoverPeers()
         if err != nil {
             log.Printf("peer discovery failed: %v", err)
         }
 
-        for _, peer := range discoveredPeers {
+        for _, record := range discoveredPeerRecords {
             select {
-            case peers <- peer:
+            case peers <- record:
             default:
             }
         }
@@ -138,13 +138,20 @@ func periodicallyDiscoverPeers(node *node.P2PNode, peers chan discovery.Peer) {
 }
 
 func startSender(p2pNode *node.P2PNode) {
-    peers := make(chan discovery.Peer, 16)
+    peers := make(chan discovery.PeerRecord, 16)
     go periodicallyDiscoverPeers(p2pNode, peers)
     go func() {
         fmt.Println("Peers: ")
 
-        for p := range peers {
-            fmt.Printf("- %s: %s\n", p.Name, p.Address)
+        for record := range peers {
+			peer := record.Peer
+            fmt.Printf(
+				"| %s: %s | First seen: %s | Last seen: %s |\n",
+				peer.Name,
+				peer.Address,
+				record.FirstSeenAt,
+				record.LastSeenAt,
+			)
         }
     }()
 

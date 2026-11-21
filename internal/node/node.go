@@ -27,7 +27,7 @@ type P2PNode struct {
 	sender          *sender
 	eventManager    *event.Manager
 	transferManager *transfer.Manager
-	mdnsDiscovery   discovery.Discovery
+	peerManager     *discovery.PeerManager
 }
 
 func (n *P2PNode) listen() error {
@@ -42,7 +42,7 @@ func (n *P2PNode) Start() error {
 		return err
 	}
 
-	err = n.mdnsDiscovery.Start()
+	err = n.peerManager.Start()
 	if err != nil {
 		n.receiver.Cleanup()
 		return err
@@ -55,23 +55,15 @@ func (n *P2PNode) NodeID() discovery.PeerId {
 	return n.nodeId
 }
 
-func (n *P2PNode) isSelf(peer discovery.Peer) bool {
-    return peer.Id != "" && peer.Id == n.nodeId
-}
+func (n *P2PNode) DiscoverPeers() ([]discovery.PeerRecord, error) {
+	discoveredPeers, err := n.peerManager.Discover()
 
-func (n *P2PNode) DiscoverPeers() ([]discovery.Peer, error) {
-	discoveredPeers, err := n.mdnsDiscovery.Discover()
-
-	peers := make([]discovery.Peer, 0, len(discoveredPeers))
-	for _, peer := range discoveredPeers {
-		if n.isSelf(peer) {
-			continue
-		}
-
-		peers = append(peers, peer)
+	records := make([]discovery.PeerRecord, 0, len(discoveredPeers))
+	for _, record := range discoveredPeers {
+		records = append(records, record)
 	}
 
-	return peers, err
+	return records, err
 }
 
 func (n *P2PNode) SendFile(receiverAddr *net.UDPAddr, filename string) error {
@@ -84,7 +76,7 @@ func (n *P2PNode) RegisterEventHandler(handler event.EventHandlerFunc) error {
 
 func (n *P2PNode) Cleanup() {
 	// TODO log errors or smth
-	n.mdnsDiscovery.Stop()
+	n.peerManager.Stop()
 	n.eventManager.CleanUp()
 	n.transferManager.CleanUp()
 	n.receiver.Cleanup()
@@ -115,15 +107,15 @@ func newMDNSDiscovery(addr *net.UDPAddr, id discovery.PeerId) (discovery.Discove
 	}
 
 	displayName := strings.TrimSuffix(hostName, ".")
-    displayName = strings.TrimSuffix(displayName, ".local")
+	displayName = strings.TrimSuffix(displayName, ".local")
 
-    uniqueInstanceName := "Airlink-" + string(id)
+	uniqueInstanceName := "Airlink-" + string(id)
 
 	info := []string{
-        discovery.MDNSPeerIDTXTKey + "=" + string(id),
+		discovery.MDNSPeerIDTXTKey + "=" + string(id),
 		discovery.MDNSPeerNameTXTKey + "=" + displayName,
-        discovery.MDNSProtocolVersionTXTKey + "=" + discovery.AirlinkProtocolVersion,
-    }
+		discovery.MDNSProtocolVersionTXTKey + "=" + discovery.AirlinkProtocolVersion,
+	}
 
 	return discovery.NewMDNSDiscovery(
 		uniqueInstanceName,
@@ -140,7 +132,7 @@ func newP2PNode(
 	addr *net.UDPAddr,
 	listen udpListenFunc,
 	openReader file.OpenReaderFunc,
-	discoverMDNS discovery.DiscoveryMDNSFunc,
+	discoverMDNS discovery.DiscoverMDNSFunc,
 ) (*P2PNode, error) {
 	udpConn, err := listen(addr.Network(), addr)
 	if err != nil {
@@ -175,6 +167,12 @@ func newP2PNode(
 	receiver := newReceiver(transport, transferManager.Receive)
 	sender := newSender(transport, boundAddr, transferManager.Send)
 
+	peerManager, err := discovery.NewPeerManager(id, mdnsDiscovery)
+	if err != nil {
+		udpConn.Close()
+		return nil, err
+	}
+
 	return &P2PNode{
 		nodeId:          id,
 		addr:            boundAddr,
@@ -185,6 +183,6 @@ func newP2PNode(
 		sender:          sender,
 		eventManager:    eventManager,
 		transferManager: transferManager,
-		mdnsDiscovery:   mdnsDiscovery,
+		peerManager:     peerManager,
 	}, nil
 }
