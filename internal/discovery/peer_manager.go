@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"airlink/internal/metadata"
 	"errors"
 	"net"
 	"sync"
@@ -20,12 +21,12 @@ type PeerRecord struct {
 }
 
 type PeerManager struct {
-	nodeId    PeerId
+	nodeId    metadata.PeerId
 	discovery Discovery
 
 	mu          sync.RWMutex
 	discoveryMu sync.Mutex
-	peers       map[PeerId]PeerRecord
+	peers       map[metadata.PeerId]PeerRecord
 
 	lifecycleMu sync.Mutex
 	started     bool
@@ -99,7 +100,7 @@ func (m *PeerManager) GetPeers() []PeerRecord {
 	return records
 }
 
-func (m *PeerManager) GetPeer(id PeerId) (PeerRecord, bool) {
+func (m *PeerManager) GetPeer(id metadata.PeerId) (PeerRecord, bool) {
 	m.mu.RLock()
 	record, ok := m.peers[id]
 	m.mu.RUnlock()
@@ -112,7 +113,7 @@ func (m *PeerManager) GetPeer(id PeerId) (PeerRecord, bool) {
 }
 
 func (m *PeerManager) updatePeers(discoveredPeers []Peer, now time.Time) {
-    peers := make(map[PeerId]PeerRecord, len(discoveredPeers))
+    peers := make(map[metadata.PeerId]PeerRecord, len(discoveredPeers))
 
     for _, peer := range discoveredPeers {
         if peer.Id == "" || peer.Id == m.nodeId {
@@ -152,7 +153,7 @@ func clonePeer(peer Peer) Peer {
 	return peer
 }
 
-func NewPeerManager(nodeID PeerId, discovery Discovery) (*PeerManager, error) {
+func NewPeerManager(nodeID metadata.PeerId, discovery Discovery) (*PeerManager, error) {
 	if nodeID == "" {
 		return nil, ErrPeerManagerNodeIDEmpty
 	}
@@ -164,6 +165,6 @@ func NewPeerManager(nodeID PeerId, discovery Discovery) (*PeerManager, error) {
 	return &PeerManager{
 		nodeId:            nodeID,
 		discovery:         discovery,
-		peers:             make(map[PeerId]PeerRecord),
+		peers:             make(map[metadata.PeerId]PeerRecord),
 	}, nil
 }

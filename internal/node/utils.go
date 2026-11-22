@@ -1,7 +1,7 @@
 package node
 
 import (
-	"airlink/internal/discovery"
+	"airlink/internal/metadata"
 	"fmt"
 	"net"
 
@@ -13,11 +13,11 @@ func CreateUDPAddress(ip string, port int) (*net.UDPAddr, error) {
 	return net.ResolveUDPAddr("udp", addr)
 }
 
-func generateNodeId() (discovery.PeerId, error) {
+func generateNodeId() (metadata.PeerId, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
 		return "", err
 	}
 
-	return discovery.PeerId(id.String()), nil
+	return metadata.PeerId(id.String()), nil
 }

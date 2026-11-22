@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"airlink/internal/metadata"
 	"errors"
 	"io"
 	"log"
@@ -27,7 +28,7 @@ const (
 	mdnsEntriesBufferSize = 64 // TODO make this configurable and changable during runtime
 )
 
-type DiscoverMDNSFunc func(*net.UDPAddr, PeerId) (Discovery, error)
+type DiscoverMDNSFunc func(*net.UDPAddr, metadata.PeerId) (Discovery, error)
 
 type mdnsServer interface {
 	Shutdown() error
@@ -183,7 +184,7 @@ func mdnsEntryToPeer(entry *MDNSServiceEntry) (*Peer, bool) {
 	}
 
 	return &Peer{
-		Id:   PeerId(id),
+		Id:   metadata.PeerId(id),
 		Name: name,
 		Address: &net.UDPAddr{
 			IP:   append(net.IP(nil), ip...),
