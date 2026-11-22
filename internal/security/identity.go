@@ -53,7 +53,7 @@ func GenerateIdentity() (*Identity, error) {
 	}
 
 	// describe cert
-	now := time.Now()
+	now := time.Now().UTC()
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{

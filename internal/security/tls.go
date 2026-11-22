@@ -7,17 +7,28 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"time"
 )
 
-const alpnProtocol = "airlink"
+const alpnProtocol = "airlink" // TODO centralize somewhere
+
+var ErrPeerCertificateMissing = errors.New("peer certificate missing")
 
 func (i *Identity) TLSConfig() *tls.Config {
 	return &tls.Config{
-		Certificates: []tls.Certificate{i.certificate},
-		MinVersion:   tls.VersionTLS13,
-		NextProtos:   []string{alpnProtocol},
+		Certificates:       []tls.Certificate{i.certificate},
+		MinVersion:         tls.VersionTLS13,
+		NextProtos:         []string{alpnProtocol},
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return ErrPeerCertificateMissing
+			}
+
+			// TODO log err
+			return ValidateCertificate(cs.PeerCertificates[0])
+		},
 	}
 }
 
