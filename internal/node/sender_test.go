@@ -1,6 +1,7 @@
 package node
 
 import (
+	"airlink/internal/security"
 	"airlink/internal/transfer"
 	"context"
 	"crypto/tls"
@@ -17,7 +18,7 @@ import (
 
 const SENDER_TEST_IP = "127.0.0.1"
 
-var tlsConfig *tls.Config = generateTestTLSConfig()
+var tlsConfig *tls.Config = security.GenerateTestTLSConfig()
 var quicConfig *quic.Config = getTestQuicConfig()
 
 func senderTestAddr() net.Addr {
