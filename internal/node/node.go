@@ -4,6 +4,7 @@ import (
 	"airlink/internal/discovery"
 	"airlink/internal/event"
 	"airlink/internal/file"
+	"airlink/internal/security"
 	"airlink/internal/transfer"
 	"context"
 	"crypto/tls"
@@ -18,13 +19,16 @@ import (
 )
 
 type P2PNode struct {
-	nodeId          discovery.PeerId
-	addr            net.Addr
-	transport       *quic.Transport
-	tlsConfig       *tls.Config
-	quicConfig      *quic.Config
-	receiver        *receiver
-	sender          *sender
+	nodeId     discovery.PeerId
+	identity   *security.Identity
+	addr       net.Addr
+	tlsConfig *tls.Config
+	quicConfig *quic.Config
+
+	transport *quic.Transport
+	receiver  *receiver
+	sender    *sender
+
 	eventManager    *event.Manager
 	transferManager *transfer.Manager
 	peerManager     *discovery.PeerManager
@@ -86,7 +90,7 @@ func (n *P2PNode) StartPeerDiscovery(pollingFrequency time.Duration) {
 		ticker := time.NewTicker(pollingFrequency)
 		defer ticker.Stop()
 
-		outer:
+	outer:
 		for {
 			select {
 			case <-ticker.C:
@@ -176,6 +180,11 @@ func newP2PNode(
 	openReader file.OpenReaderFunc,
 	discoverMDNS discovery.DiscoverMDNSFunc,
 ) (*P2PNode, error) {
+	identity, err := security.GenerateIdentity()
+	if err != nil {
+		return nil, err
+	}
+
 	udpConn, err := listen(addr.Network(), addr)
 	if err != nil {
 		slog.Error("could not listen on UDP address", "address", addr, "err", err)
@@ -199,12 +208,13 @@ func newP2PNode(
 		return nil, err
 	}
 
-	tlsConfig := generateTLSConfig()
+	tlsConfig := identity.TLSConfig()
+	tlsConfig.InsecureSkipVerify = true // TODO temp for local testing
 	quicConfig := getQuicConfig()
 	ctx, cancel := context.WithCancel(context.Background())
 
-	transport := &quic.Transport{Conn: udpConn}
 	eventManager := event.NewManager()
+	transport := &quic.Transport{Conn: udpConn}
 	transferManager := transfer.NewManager(boundAddr, openReader, eventManager.EmitEvent, ctx, cancel)
 	receiver := newReceiver(transport, transferManager.Receive)
 	sender := newSender(transport, boundAddr, transferManager.Send)
@@ -216,13 +226,16 @@ func newP2PNode(
 	}
 
 	return &P2PNode{
-		nodeId:          id,
-		addr:            boundAddr,
-		tlsConfig:       tlsConfig,
-		quicConfig:      quicConfig,
-		transport:       transport,
-		receiver:        receiver,
-		sender:          sender,
+		nodeId:     id,
+		identity:   identity,
+		addr:       boundAddr,
+		tlsConfig:  tlsConfig,
+		quicConfig: quicConfig,
+
+		transport: transport,
+		receiver:  receiver,
+		sender:    sender,
+
 		eventManager:    eventManager,
 		transferManager: transferManager,
 		peerManager:     peerManager,

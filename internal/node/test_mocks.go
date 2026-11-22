@@ -4,14 +4,8 @@ import (
 	"airlink/internal/discovery"
 	"airlink/internal/transfer"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
-	"math/big"
 	"net"
 	"time"
 
@@ -24,35 +18,6 @@ func testAddr() net.Addr {
 	return &net.UDPAddr{
 		IP:   net.ParseIP(testIP),
 		Port: 54321,
-	}
-}
-
-// unsecure config
-func generateTestTLSConfig() *tls.Config {
-	// Generate a fast P-256 elliptic curve key
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-
-	// Strip down to the absolute bare minimum template properties
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-
-	certDER, _ := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
-	keyDER, _ := x509.MarshalECPrivateKey(key)
-
-	// Bypass string PEM blocks and create the keypair directly from raw DER bytes
-	tlsCert, _ := tls.X509KeyPair(
-		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}),
-		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
-	)
-
-	return &tls.Config{
-		Certificates:       []tls.Certificate{tlsCert},
-		MinVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"airlink"},
 	}
 }
 
@@ -125,23 +90,23 @@ func (l *mockListener) Close() error {
 }
 
 type mockMDNSDiscovery struct {
-    start    func() error
-    stop     func() error
-    discover func() ([]discovery.Peer, error)
+	start    func() error
+	stop     func() error
+	discover func() ([]discovery.Peer, error)
 }
 
 func (d *mockMDNSDiscovery) Start() error {
-    return d.start()
+	return d.start()
 }
 
 func (d *mockMDNSDiscovery) Stop() error {
-    return d.stop()
+	return d.stop()
 }
 
 func (d *mockMDNSDiscovery) Discover() ([]discovery.Peer, error) {
-    if d.discover == nil {
-        return nil, nil
-    }
+	if d.discover == nil {
+		return nil, nil
+	}
 
-    return d.discover()
+	return d.discover()
 }
