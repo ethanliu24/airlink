@@ -10,6 +10,7 @@ import (
 	"airlink/internal/transport"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
 )
 
@@ -40,109 +42,33 @@ type P2PNode struct {
 	discoveryMu         sync.Mutex
 }
 
-func (n *P2PNode) listen() error {
-	return n.receiver.Listen(n.serverTLS, n.quicConfig)
+type udpListenFunc func(network string, address *net.UDPAddr) (*net.UDPConn, error)
+
+func CreateUDPAddress(ip string, port int) (*net.UDPAddr, error) {
+	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
+	return net.ResolveUDPAddr("udp", addr)
 }
 
-func (n *P2PNode) Start() error {
-	n.eventManager.StartListening()
-
-	err := n.listen()
+func generateNodeId() (metadata.PeerId, error) {
+	id, err := uuid.NewV7()
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	err = n.GoOnline()
-	if err != nil {
-		n.receiver.CleanUp()
-		return err
+	return metadata.PeerId(id.String()), nil
+}
+
+func getQuicConfig() *quic.Config {
+	return &quic.Config{
+		// InitialStreamReceiveWindow: 1<<20, // 1 MB
+		// MaxStreamReceiveWindow: 6<<20, // 6 MB
+		// InitialConnectionReceiveWindow: 2<<20, // 2 MB
+		// MaxConnectionReceiveWindow: 12<<20, // 12 MB
+		// MaxIncomingStreams: 100, // bidirectional streams
+		// MaxIncomingUniStreams: 100, // unidirectional streams
+		MaxIdleTimeout:  30 * time.Second,
+		KeepAlivePeriod: 15 * time.Second,
 	}
-
-	return nil
-}
-
-func (n *P2PNode) NodeID() metadata.NodeId {
-	return n.nodeId
-}
-
-func (n *P2PNode) GoOnline() error {
-	return n.peerManager.Start()
-}
-
-func (n *P2PNode) GoOffline() error {
-	return n.peerManager.Stop()
-}
-
-func (n *P2PNode) GetPeers() []discovery.PeerRecord {
-	return n.peerManager.GetPeers()
-}
-
-func (n *P2PNode) StartPeerDiscovery(pollingFrequency time.Duration) {
-	n.discoveryMu.Lock()
-
-	if n.cancelPeerDiscovery != nil {
-		n.cancelPeerDiscovery()
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	n.cancelPeerDiscovery = cancel
-
-	n.discoveryMu.Unlock()
-
-	go func() {
-		ticker := time.NewTicker(pollingFrequency)
-		defer ticker.Stop()
-
-	outer:
-		for {
-			select {
-			case <-ticker.C:
-				n.peerManager.Discover() // TODO if err then log
-			case <-ctx.Done():
-				break outer
-			}
-		}
-	}()
-}
-
-func (n *P2PNode) StopPeerDiscovery() {
-	n.discoveryMu.Lock()
-	defer n.discoveryMu.Unlock()
-
-	if n.cancelPeerDiscovery != nil {
-		n.cancelPeerDiscovery()
-		n.cancelPeerDiscovery = nil
-	}
-}
-
-func (n *P2PNode) SendFile(receiverAddr *net.UDPAddr, filename string) error {
-	return n.sender.Send(receiverAddr, filename, n.clientTLS, n.quicConfig)
-}
-
-func (n *P2PNode) RegisterEventHandler(handler event.EventHandlerFunc) error {
-	return n.eventManager.RegisterEventHandler(handler)
-}
-
-func (n *P2PNode) Cleanup() {
-	// TODO log errors or smth
-	n.peerManager.Stop()
-	n.eventManager.CleanUp()
-	n.transferManager.CleanUp()
-	n.receiver.CleanUp()
-	n.sender.CleanUp()
-	n.transport.Close()
-}
-
-func (n *P2PNode) SubmitTransferAcceptDecision(id transfer.TransferId, accepted bool) error {
-	return n.transferManager.SubmitTransferAcceptDecision(id, accepted)
-}
-
-func (n *P2PNode) SubmitDownloadDestination(id transfer.TransferId, destination string) error {
-	return n.transferManager.SubmitDownloadDestination(id, destination)
-}
-
-func (n *P2PNode) SubmitDuplicatedDestinationHandling(id transfer.TransferId, mode file.WriterCommitMode) error {
-	return n.transferManager.SubmitDuplicatedDestinationHandling(id, mode)
 }
 
 func NewP2PNode(addr *net.UDPAddr) (*P2PNode, error) {
@@ -176,8 +102,6 @@ func newMDNSDiscovery(addr *net.UDPAddr, id metadata.PeerId) (discovery.Discover
 		info,
 	)
 }
-
-type udpListenFunc func(network string, address *net.UDPAddr) (*net.UDPConn, error)
 
 func newP2PNode(
 	addr *net.UDPAddr,
