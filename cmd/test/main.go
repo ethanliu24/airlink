@@ -124,7 +124,7 @@ func startSender(p2pNode *node.P2PNode) {
 		defer ticker.Stop()
 
         fmt.Println("Peers: ")
-		for {
+		for range ticker.C {
 			for _, record := range p2pNode.GetPeers() {
 				peer := record.Peer
 				fmt.Printf(
