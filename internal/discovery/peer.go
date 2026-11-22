@@ -1,11 +1,12 @@
 package discovery
 
-import "net"
-
-type PeerId string
+import (
+	"airlink/internal/metadata"
+	"net"
+)
 
 type Peer struct {
-	Id      PeerId
+	Id      metadata.PeerId
 	Name    string
 	Address *net.UDPAddr
 }

@@ -4,6 +4,7 @@ import (
 	"airlink/internal/discovery"
 	"airlink/internal/event"
 	"airlink/internal/file"
+	"airlink/internal/metadata"
 	"airlink/internal/security"
 	"airlink/internal/transfer"
 	"context"
@@ -19,7 +20,7 @@ import (
 )
 
 type P2PNode struct {
-	nodeId     discovery.PeerId
+	nodeId     metadata.PeerId
 	identity   *security.Identity
 	addr       net.Addr
 	clientTLS  *tls.Config
@@ -59,7 +60,7 @@ func (n *P2PNode) Start() error {
 	return nil
 }
 
-func (n *P2PNode) NodeID() discovery.PeerId {
+func (n *P2PNode) NodeID() metadata.PeerId {
 	return n.nodeId
 }
 
@@ -147,7 +148,7 @@ func NewP2PNode(addr *net.UDPAddr) (*P2PNode, error) {
 	return newP2PNode(addr, net.ListenUDP, file.OpenReader, newMDNSDiscovery)
 }
 
-func newMDNSDiscovery(addr *net.UDPAddr, id discovery.PeerId) (discovery.Discovery, error) {
+func newMDNSDiscovery(addr *net.UDPAddr, id metadata.PeerId) (discovery.Discovery, error) {
 	hostName, err := os.Hostname()
 	if err != nil {
 		return nil, err

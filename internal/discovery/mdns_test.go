@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"airlink/internal/metadata"
 	"errors"
 	"net"
 	"testing"
@@ -113,7 +114,7 @@ func TestMDNSDiscoveryDiscoverConvertsEntriesToPeers(t *testing.T) {
 	require.Len(t, peers, 1)
 
     assert.Equal(t, Peer{
-        Id:   PeerId("peer-123"),
+        Id:   metadata.PeerId("peer-123"),
         Name: "SomeDevice",
         Address: &net.UDPAddr{
             IP:   net.ParseIP("192.0.2.10"),
@@ -244,7 +245,7 @@ func TestMDNSDiscoveryDiscoverFiltersEntriesByService(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, peers, 1)
 
-	assert.Equal(t, PeerId(id), peers[0].Id)
+	assert.Equal(t, metadata.PeerId(id), peers[0].Id)
 	assert.Equal(t, "SomeDevice", peers[0].Name)
 }
 
@@ -261,7 +262,7 @@ func TestMDNSEntryToPeer(t *testing.T) {
 
 	require.True(t, ok)
 
-	assert.Equal(t, PeerId("peer-123"), peer.Id)
+	assert.Equal(t, metadata.PeerId("peer-123"), peer.Id)
 	assert.Equal(t, "SomeDevice", peer.Name)
 	assert.Equal(t, &net.UDPAddr{
 		IP:   net.ParseIP("192.0.2.10"),

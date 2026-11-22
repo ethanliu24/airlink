@@ -1,7 +1,7 @@
-
 package discovery
 
 import (
+	"airlink/internal/metadata"
 	"errors"
 	"net"
 	"sync"
@@ -89,7 +89,7 @@ func newTestPeerManager(
 ) *PeerManager {
 	t.Helper()
 
-	manager, err := NewPeerManager(PeerId("local-node"), discovery)
+	manager, err := NewPeerManager(metadata.PeerId("local-node"), discovery)
 	require.NoError(t, err)
 
 	return manager
@@ -99,12 +99,12 @@ func TestNewPeerManager(t *testing.T) {
 	t.Run("creates manager", func(t *testing.T) {
 		discovery := &mockPeerDiscovery{}
 
-		manager, err := NewPeerManager(PeerId("local-node"), discovery)
+		manager, err := NewPeerManager(metadata.PeerId("local-node"), discovery)
 
 		require.NoError(t, err)
 		require.NotNil(t, manager)
 
-		assert.Equal(t, PeerId("local-node"), manager.nodeId)
+		assert.Equal(t, metadata.PeerId("local-node"), manager.nodeId)
 		assert.Same(t, discovery, manager.discovery)
 		assert.Empty(t, manager.GetPeers())
 	})
@@ -117,7 +117,7 @@ func TestNewPeerManager(t *testing.T) {
 	})
 
 	t.Run("rejects nil discovery", func(t *testing.T) {
-		manager, err := NewPeerManager(PeerId("local-node"), nil)
+		manager, err := NewPeerManager(metadata.PeerId("local-node"), nil)
 
 		assert.Nil(t, manager)
 		assert.ErrorIs(t, err, ErrPeerManagerDiscoveryNil)
@@ -190,19 +190,19 @@ func TestPeerManagerDiscoverFiltersSelfAndDeduplicatesPeers(t *testing.T) {
 	discovery := &mockPeerDiscovery{}
 	discovery.setPeers([]Peer{
 		{
-			Id:   PeerId("local-node"),
+			Id:   metadata.PeerId("local-node"),
 			Name: "Self",
 		},
 		{
-			Id:   PeerId("peer-1"),
+			Id:   metadata.PeerId("peer-1"),
 			Name: "OldName",
 		},
 		{
-			Id:   PeerId("peer-1"),
+			Id:   metadata.PeerId("peer-1"),
 			Name: "NewName",
 		},
 		{
-			Id:   PeerId("peer-2"),
+			Id:   metadata.PeerId("peer-2"),
 			Name: "AnotherPeer",
 		},
 		{
@@ -218,14 +218,14 @@ func TestPeerManagerDiscoverFiltersSelfAndDeduplicatesPeers(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 
-	peer1, exists := manager.GetPeer(PeerId("peer-1"))
+	peer1, exists := manager.GetPeer(metadata.PeerId("peer-1"))
 	require.True(t, exists)
 	assert.Equal(t, "NewName", peer1.Peer.Name)
 
-	_, exists = manager.GetPeer(PeerId("peer-2"))
+	_, exists = manager.GetPeer(metadata.PeerId("peer-2"))
 	assert.True(t, exists)
 
-	_, exists = manager.GetPeer(PeerId("local-node"))
+	_, exists = manager.GetPeer(metadata.PeerId("local-node"))
 	assert.False(t, exists)
 
 	for _, record := range records {
@@ -240,11 +240,11 @@ func TestPeerManagerDiscoverReplacesSnapshot(t *testing.T) {
 
 	discovery.setPeers([]Peer{
 		{
-			Id:   PeerId("peer-1"),
+			Id:   metadata.PeerId("peer-1"),
 			Name: "Peer 1",
 		},
 		{
-			Id:   PeerId("peer-2"),
+			Id:   metadata.PeerId("peer-2"),
 			Name: "Peer 2",
 		},
 	})
@@ -257,11 +257,11 @@ func TestPeerManagerDiscoverReplacesSnapshot(t *testing.T) {
 	// Peer 1 is no longer returned by discovery.
 	discovery.setPeers([]Peer{
 		{
-			Id:   PeerId("peer-2"),
+			Id:   metadata.PeerId("peer-2"),
 			Name: "Peer 2",
 		},
 		{
-			Id:   PeerId("peer-3"),
+			Id:   metadata.PeerId("peer-3"),
 			Name: "Peer 3",
 		},
 	})
@@ -271,13 +271,13 @@ func TestPeerManagerDiscoverReplacesSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 
-	_, exists := manager.GetPeer(PeerId("peer-1"))
+	_, exists := manager.GetPeer(metadata.PeerId("peer-1"))
 	assert.False(t, exists)
 
-	_, exists = manager.GetPeer(PeerId("peer-2"))
+	_, exists = manager.GetPeer(metadata.PeerId("peer-2"))
 	assert.True(t, exists)
 
-	_, exists = manager.GetPeer(PeerId("peer-3"))
+	_, exists = manager.GetPeer(metadata.PeerId("peer-3"))
 	assert.True(t, exists)
 }
 
@@ -289,7 +289,7 @@ func TestPeerManagerDiscoverUpdatesExistingPeer(t *testing.T) {
 
 	manager.updatePeers([]Peer{
 		{
-			Id:   PeerId("peer-1"),
+			Id:   metadata.PeerId("peer-1"),
 			Name: "OldName",
 			Address: &net.UDPAddr{
 				IP:   net.ParseIP("192.0.2.10"),
@@ -300,7 +300,7 @@ func TestPeerManagerDiscoverUpdatesExistingPeer(t *testing.T) {
 
 	manager.updatePeers([]Peer{
 		{
-			Id:   PeerId("peer-1"),
+			Id:   metadata.PeerId("peer-1"),
 			Name: "NewName",
 			Address: &net.UDPAddr{
 				IP:   net.ParseIP("192.0.2.20"),
@@ -309,7 +309,7 @@ func TestPeerManagerDiscoverUpdatesExistingPeer(t *testing.T) {
 		},
 	}, lastSeen)
 
-	record, exists := manager.GetPeer(PeerId("peer-1"))
+	record, exists := manager.GetPeer(metadata.PeerId("peer-1"))
 
 	require.True(t, exists)
 	assert.Equal(t, "NewName", record.Peer.Name)
@@ -325,7 +325,7 @@ func TestPeerManagerDiscoverPreservesPeersOnError(t *testing.T) {
 
 	discovery.setPeers([]Peer{
 		{
-			Id:   PeerId("peer-1"),
+			Id:   metadata.PeerId("peer-1"),
 			Name: "Peer",
 		},
 	})
@@ -341,7 +341,7 @@ func TestPeerManagerDiscoverPreservesPeersOnError(t *testing.T) {
 
 	require.Error(t, err)
 	require.Len(t, records, 1)
-	assert.Equal(t, PeerId("peer-1"), records[0].Peer.Id)
+	assert.Equal(t, metadata.PeerId("peer-1"), records[0].Peer.Id)
 	assert.Equal(t, "Peer", records[0].Peer.Name)
 }
 
@@ -350,17 +350,17 @@ func TestPeerManagerGetPeer(t *testing.T) {
 
 	manager.updatePeers([]Peer{
 		{
-			Id:   PeerId("peer-1"),
+			Id:   metadata.PeerId("peer-1"),
 			Name: "Peer",
 		},
 	}, time.Now())
 
-	record, exists := manager.GetPeer(PeerId("peer-1"))
+	record, exists := manager.GetPeer(metadata.PeerId("peer-1"))
 
 	require.True(t, exists)
-	assert.Equal(t, PeerId("peer-1"), record.Peer.Id)
+	assert.Equal(t, metadata.PeerId("peer-1"), record.Peer.Id)
 
-	_, exists = manager.GetPeer(PeerId("missing"))
+	_, exists = manager.GetPeer(metadata.PeerId("missing"))
 	assert.False(t, exists)
 }
 
@@ -369,7 +369,7 @@ func TestPeerManagerGetPeersReturnsCopy(t *testing.T) {
 
 	manager.updatePeers([]Peer{
 		{
-			Id:   PeerId("peer-1"),
+			Id:   metadata.PeerId("peer-1"),
 			Name: "Original",
 			Address: &net.UDPAddr{
 				IP:   net.ParseIP("192.0.2.10"),
@@ -386,7 +386,7 @@ func TestPeerManagerGetPeersReturnsCopy(t *testing.T) {
 	records[0].Peer.Address.IP[0] = 255
 	records[0].Peer.Address.Port = 9999
 
-	stored, exists := manager.GetPeer(PeerId("peer-1"))
+	stored, exists := manager.GetPeer(metadata.PeerId("peer-1"))
 
 	require.True(t, exists)
 	assert.Equal(t, "Original", stored.Peer.Name)
@@ -399,7 +399,7 @@ func TestPeerManagerGetPeerReturnsCopy(t *testing.T) {
 
 	manager.updatePeers([]Peer{
 		{
-			Id:   PeerId("peer-1"),
+			Id:   metadata.PeerId("peer-1"),
 			Name: "Original",
 			Address: &net.UDPAddr{
 				IP:   net.ParseIP("192.0.2.10"),
@@ -408,14 +408,14 @@ func TestPeerManagerGetPeerReturnsCopy(t *testing.T) {
 		},
 	}, time.Now())
 
-	record, exists := manager.GetPeer(PeerId("peer-1"))
+	record, exists := manager.GetPeer(metadata.PeerId("peer-1"))
 	require.True(t, exists)
 
 	record.Peer.Name = "Modified"
 	record.Peer.Address.IP[0] = 255
 	record.Peer.Address.Port = 9999
 
-	stored, exists := manager.GetPeer(PeerId("peer-1"))
+	stored, exists := manager.GetPeer(metadata.PeerId("peer-1"))
 
 	require.True(t, exists)
 	assert.Equal(t, "Original", stored.Peer.Name)

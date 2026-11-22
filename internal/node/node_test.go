@@ -4,6 +4,7 @@ import (
 	"airlink/internal/discovery"
 	"airlink/internal/event"
 	"airlink/internal/file"
+	"airlink/internal/metadata"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -43,7 +44,7 @@ type nodeTestEventPayload struct {
 
 func newNoopMDNSDiscovery(
 	_ *net.UDPAddr,
-	_ discovery.PeerId,
+	_ metadata.PeerId,
 ) (discovery.Discovery, error) {
 	return &mockMDNSDiscovery{
 		start: func() error { return nil },
@@ -108,7 +109,7 @@ func TestNewP2PNodeReturnsMDNSDiscoveryError(t *testing.T) {
 		addr,
 		mockListen,
 		mockOpenReader,
-		func(addr *net.UDPAddr, nodeID discovery.PeerId) (discovery.Discovery, error) {
+		func(addr *net.UDPAddr, nodeID metadata.PeerId) (discovery.Discovery, error) {
 			return nil, wantErr
 		},
 	)
@@ -159,7 +160,7 @@ func TestP2PNodeStartBeginsDiscoveryAfterListening(t *testing.T) {
 		addr,
 		mockListen,
 		mockOpenReader,
-		func(addr *net.UDPAddr, nodeID discovery.PeerId) (discovery.Discovery, error) {
+		func(addr *net.UDPAddr, nodeID metadata.PeerId) (discovery.Discovery, error) {
 			return mdns, nil
 		},
 	)
@@ -190,7 +191,7 @@ func TestP2PNodeStartDoesNotAdvertiseWhenListeningFails(t *testing.T) {
 		addr,
 		mockListen,
 		mockOpenReader,
-		func(addr *net.UDPAddr, nodeID discovery.PeerId) (discovery.Discovery, error) {
+		func(addr *net.UDPAddr, nodeID metadata.PeerId) (discovery.Discovery, error) {
 			return &mockMDNSDiscovery{
 				start: func() error {
 					started = true
@@ -217,7 +218,7 @@ func TestP2PNodePeerDiscovery(t *testing.T) {
 	t.Parallel()
 
 	expected := discovery.Peer{
-		Id:   discovery.PeerId("peer-1"),
+		Id:   metadata.PeerId("peer-1"),
 		Name: "Test",
 		Address: &net.UDPAddr{
 			IP:   net.ParseIP("192.0.2.20"),
@@ -232,7 +233,7 @@ func TestP2PNodePeerDiscovery(t *testing.T) {
 		},
 		mockListen,
 		mockOpenReader,
-		func(addr *net.UDPAddr, nodeID discovery.PeerId) (discovery.Discovery, error) {
+		func(addr *net.UDPAddr, nodeID metadata.PeerId) (discovery.Discovery, error) {
 			return &mockMDNSDiscovery{
 				start: func() error { return nil },
 				stop:  func() error { return nil },
@@ -269,7 +270,7 @@ func TestP2PNodeStartPeerDiscovery(t *testing.T) {
 	}
 
 	peerManager, err := discovery.NewPeerManager(
-		discovery.PeerId("local-node"),
+		metadata.PeerId("local-node"),
 		mdns,
 	)
 	require.NoError(t, err)
@@ -314,7 +315,7 @@ func TestP2PNodeStopPeerDiscovery(t *testing.T) {
 	}
 
 	peerManager, err := discovery.NewPeerManager(
-		discovery.PeerId("local-node"),
+		metadata.PeerId("local-node"),
 		mdns,
 	)
 	require.NoError(t, err)
@@ -393,13 +394,13 @@ func TestNewP2PNodeGeneratesNodeID(t *testing.T) {
 	addr, err := toUDPAddress(NODE_TEST_IP, 1234)
 	require.NoError(t, err)
 
-	var receivedID discovery.PeerId
+	var receivedID metadata.PeerId
 
 	p2pNode, err := newP2PNode(
 		addr,
 		mockListen,
 		mockOpenReader,
-		func(_ *net.UDPAddr, nodeID discovery.PeerId) (discovery.Discovery, error) {
+		func(_ *net.UDPAddr, nodeID metadata.PeerId) (discovery.Discovery, error) {
 			receivedID = nodeID
 
 			return &mockMDNSDiscovery{
