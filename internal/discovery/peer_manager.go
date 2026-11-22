@@ -82,7 +82,7 @@ func (m *PeerManager) Discover() ([]PeerRecord, error) {
 		return m.GetPeers(), err
 	}
 
-	m.updatePeers(discoveredPeers, time.Now())
+	m.updatePeers(discoveredPeers, time.Now().UTC())
 
 	return m.GetPeers(), nil
 }

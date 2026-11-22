@@ -72,7 +72,7 @@ func TestGenerateIdentity(t *testing.T) {
 	}
 
 	// Check certificate validity.
-	now := time.Now()
+	now := time.Now().UTC()
 
 	if leaf.NotBefore.After(now) {
 		t.Error("certificate is not valid yet")

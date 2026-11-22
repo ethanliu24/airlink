@@ -101,14 +101,14 @@ func TestValidateCertificate_InvalidCertificates(t *testing.T) {
 			name:    "not yet valid",
 			wantErr: "certificate is not yet valid",
 			mutate: func(cert *x509.Certificate) {
-				cert.NotBefore = time.Now().Add(time.Hour)
+				cert.NotBefore = time.Now().UTC().Add(time.Hour)
 			},
 		},
 		{
 			name:    "expired certificate",
 			wantErr: "certificate has expired",
 			mutate: func(cert *x509.Certificate) {
-				cert.NotAfter = time.Now().Add(-time.Hour)
+				cert.NotAfter = time.Now().UTC().Add(-time.Hour)
 			},
 		},
 		{

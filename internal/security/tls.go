@@ -40,8 +40,8 @@ func GenerateTestTLSConfig() *tls.Config {
 	// Strip down to the absolute bare minimum template properties
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(24 * time.Hour),
+		NotBefore:    time.Now().UTC(),
+		NotAfter:     time.Now().UTC().Add(24 * time.Hour),
 	}
 
 	certDER, _ := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
