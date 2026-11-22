@@ -4,6 +4,7 @@ import (
 	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
+	"airlink/internal/wire"
 	"context"
 	"errors"
 	"fmt"
@@ -189,7 +190,7 @@ func (r *receive) ingestRequst() error {
 		return fmt.Errorf("receive request nil - not initialized properly")
 	}
 
-	err := readMessage(r.stream, r.request)
+	err := wire.ReadMessage(r.stream, r.request)
 	if err != nil {
 		return err
 	}
@@ -353,7 +354,7 @@ func (r *receive) sendResponse() error {
 		)
 	}
 
-	err := writeMessage(r.stream, r.response)
+	err := wire.WriteMessage(r.stream, r.response)
 	if err != nil {
 		return err
 	}

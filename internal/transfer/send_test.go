@@ -4,6 +4,7 @@ import (
 	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
+	"airlink/internal/wire"
 
 	"bytes"
 	"context"
@@ -319,7 +320,7 @@ func newSendTestResponseReader(
 	t.Helper()
 
 	var buf bytes.Buffer
-	require.NoError(t, writeMessage(&buf, response))
+	require.NoError(t, wire.WriteMessage(&buf, response))
 
 	return bytes.NewReader(buf.Bytes())
 }
@@ -654,7 +655,7 @@ func TestSendTransferRequest(t *testing.T) {
 
 		_, _, _, written := state.stats()
 		received := &models.TransferRequest{}
-		err = readMessage(bytes.NewReader(written), received)
+		err = wire.ReadMessage(bytes.NewReader(written), received)
 
 		require.NoError(t, err)
 		assert.Equal(t, sender.request.GetFilename(), received.GetFilename())
@@ -997,7 +998,7 @@ func TestTransferSendRun(t *testing.T) {
 		out := bytes.NewReader(written)
 		received := &models.TransferRequest{}
 
-		require.NoError(t, readMessage(out, received))
+		require.NoError(t, wire.ReadMessage(out, received))
 		assert.Equal(t, sender.request.GetFilename(), received.GetFilename())
 		assert.Equal(t, sender.request.GetFileSize(), received.GetFileSize())
 		assert.Equal(t, sender.request.GetMime(), received.GetMime())
@@ -1042,7 +1043,7 @@ func TestTransferSendRun(t *testing.T) {
 		out := bytes.NewReader(written)
 		received := &models.TransferRequest{}
 
-		require.NoError(t, readMessage(out, received))
+		require.NoError(t, wire.ReadMessage(out, received))
 		assert.Equal(t, "hello.txt", received.GetFilename())
 		assert.Zero(t, out.Len())
 		assert.Zero(t, reader.pos)

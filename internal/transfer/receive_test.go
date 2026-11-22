@@ -4,6 +4,7 @@ import (
 	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
+	"airlink/internal/wire"
 	"fmt"
 
 	"bytes"
@@ -133,7 +134,7 @@ func newReceiveTestInput(
 
 	var incoming bytes.Buffer
 
-	require.NoError(t, writeMessage(&incoming, request))
+	require.NoError(t, wire.WriteMessage(&incoming, request))
 
 	_, err := incoming.Write(fileData)
 	require.NoError(t, err)
@@ -1031,7 +1032,7 @@ func TestReceiveSendResponse(t *testing.T) {
 		require.NoError(t, err)
 
 		response := &models.TransferResponse{}
-		require.NoError(t, readMessage(&outgoing, response))
+		require.NoError(t, wire.ReadMessage(&outgoing, response))
 
 		assert.Equal(t, "request-123", response.GetId())
 		assert.True(t, response.GetAccepted())
@@ -1732,7 +1733,7 @@ func TestReceiveRun(t *testing.T) {
 		// Verify the response was written to the stream.
 		response := &models.TransferResponse{}
 
-		err := readMessage(bytes.NewReader(outgoing.Bytes()), response)
+		err := wire.ReadMessage(bytes.NewReader(outgoing.Bytes()), response)
 
 		require.NoError(t, err)
 		assert.True(t, response.GetAccepted())
@@ -1787,7 +1788,7 @@ func TestReceiveRun(t *testing.T) {
 		assert.Empty(t, emitted)
 
 		response := &models.TransferResponse{}
-		require.NoError(t, readMessage(bytes.NewReader(outgoing.Bytes()), response))
+		require.NoError(t, wire.ReadMessage(bytes.NewReader(outgoing.Bytes()), response))
 
 		assert.False(t, response.GetAccepted())
 	})

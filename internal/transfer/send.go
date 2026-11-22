@@ -4,6 +4,7 @@ import (
 	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
+	"airlink/internal/wire"
 	"context"
 	"fmt"
 	"io"
@@ -248,7 +249,7 @@ func (s *send) sendTransferRequest() error {
 		)
 	}
 
-	err := writeMessage(s.stream, s.request)
+	err := wire.WriteMessage(s.stream, s.request)
 	if err != nil {
 		return err
 	}
@@ -279,7 +280,7 @@ func (s *send) recieveTransferResponse() error {
 		s.stream.Abort()
 	})
 
-	err := readMessage(s.stream, s.response)
+	err := wire.ReadMessage(s.stream, s.response)
 
 	if !stopAbort() {
 		<-abortDone

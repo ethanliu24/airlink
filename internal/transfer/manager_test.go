@@ -4,6 +4,7 @@ import (
 	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/transfer/models"
+	"airlink/internal/wire"
 	"bytes"
 	"context"
 	"errors"
@@ -193,7 +194,7 @@ func TestManagerSend(t *testing.T) {
 		}
 
 		var response bytes.Buffer
-		require.NoError(t, writeMessage(&response, &models.TransferResponse{
+		require.NoError(t, wire.WriteMessage(&response, &models.TransferResponse{
 			Accepted: true,
 		}))
 
@@ -252,7 +253,7 @@ func TestManagerSend(t *testing.T) {
 		out := bytes.NewReader(written.Bytes())
 		request := &models.TransferRequest{}
 
-		require.NoError(t, readMessage(out, request))
+		require.NoError(t, wire.ReadMessage(out, request))
 
 		assert.Equal(t, "report.txt", request.GetFilename())
 		assert.Equal(t, uint64(len(data)), request.GetFileSize())
