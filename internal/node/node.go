@@ -22,7 +22,8 @@ type P2PNode struct {
 	nodeId     discovery.PeerId
 	identity   *security.Identity
 	addr       net.Addr
-	tlsConfig *tls.Config
+	clientTLS  *tls.Config
+	serverTLS  *tls.Config
 	quicConfig *quic.Config
 
 	transport *quic.Transport
@@ -38,7 +39,7 @@ type P2PNode struct {
 }
 
 func (n *P2PNode) listen() error {
-	return n.receiver.Listen(n.tlsConfig, n.quicConfig)
+	return n.receiver.Listen(n.serverTLS, n.quicConfig)
 }
 
 func (n *P2PNode) Start() error {
@@ -113,7 +114,7 @@ func (n *P2PNode) StopPeerDiscovery() {
 }
 
 func (n *P2PNode) SendFile(receiverAddr *net.UDPAddr, filename string) error {
-	return n.sender.Send(receiverAddr, filename, n.tlsConfig, n.quicConfig)
+	return n.sender.Send(receiverAddr, filename, n.clientTLS, n.quicConfig)
 }
 
 func (n *P2PNode) RegisterEventHandler(handler event.EventHandlerFunc) error {
@@ -208,8 +209,12 @@ func newP2PNode(
 		return nil, err
 	}
 
-	tlsConfig := identity.TLSConfig()
-	tlsConfig.InsecureSkipVerify = true // TODO temp for local testing
+	clientTLS := identity.TLSConfig()
+	clientTLS.InsecureSkipVerify = true
+
+	serverTLS := identity.TLSConfig()
+	serverTLS.ClientAuth = tls.RequireAnyClientCert
+
 	quicConfig := getQuicConfig()
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -229,7 +234,8 @@ func newP2PNode(
 		nodeId:     id,
 		identity:   identity,
 		addr:       boundAddr,
-		tlsConfig:  tlsConfig,
+		clientTLS:  clientTLS,
+		serverTLS:  serverTLS,
 		quicConfig: quicConfig,
 
 		transport: transport,
