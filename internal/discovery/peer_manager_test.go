@@ -353,7 +353,7 @@ func TestPeerManagerGetPeer(t *testing.T) {
 			Id:   metadata.PeerId("peer-1"),
 			Name: "Peer",
 		},
-	}, time.Now())
+	}, time.Now().UTC())
 
 	record, exists := manager.GetPeer(metadata.PeerId("peer-1"))
 
@@ -376,7 +376,7 @@ func TestPeerManagerGetPeersReturnsCopy(t *testing.T) {
 				Port: 1111,
 			},
 		},
-	}, time.Now())
+	}, time.Now().UTC())
 
 	records := manager.GetPeers()
 	require.Len(t, records, 1)
@@ -406,7 +406,7 @@ func TestPeerManagerGetPeerReturnsCopy(t *testing.T) {
 				Port: 1111,
 			},
 		},
-	}, time.Now())
+	}, time.Now().UTC())
 
 	record, exists := manager.GetPeer(metadata.PeerId("peer-1"))
 	require.True(t, exists)
