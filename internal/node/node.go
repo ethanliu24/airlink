@@ -7,6 +7,7 @@ import (
 	"airlink/internal/metadata"
 	"airlink/internal/security"
 	"airlink/internal/transfer"
+	"airlink/internal/transport"
 	"context"
 	"crypto/tls"
 	"log/slog"
@@ -20,16 +21,16 @@ import (
 )
 
 type P2PNode struct {
-	nodeId     metadata.PeerId
-	identity   *security.Identity
+	nodeId     metadata.NodeId
 	addr       net.Addr
+	identity   *security.Identity
 	clientTLS  *tls.Config
 	serverTLS  *tls.Config
 	quicConfig *quic.Config
 
 	transport *quic.Transport
-	receiver  *receiver
-	sender    *sender
+	receiver  transport.Receiver
+	sender    transport.Sender
 
 	eventManager    *event.Manager
 	transferManager *transfer.Manager
@@ -53,14 +54,14 @@ func (n *P2PNode) Start() error {
 
 	err = n.GoOnline()
 	if err != nil {
-		n.receiver.Cleanup()
+		n.receiver.CleanUp()
 		return err
 	}
 
 	return nil
 }
 
-func (n *P2PNode) NodeID() metadata.PeerId {
+func (n *P2PNode) NodeID() metadata.NodeId {
 	return n.nodeId
 }
 
@@ -127,8 +128,8 @@ func (n *P2PNode) Cleanup() {
 	n.peerManager.Stop()
 	n.eventManager.CleanUp()
 	n.transferManager.CleanUp()
-	n.receiver.Cleanup()
-	n.sender.Cleanup()
+	n.receiver.CleanUp()
+	n.sender.CleanUp()
 	n.transport.Close()
 }
 
@@ -176,6 +177,8 @@ func newMDNSDiscovery(addr *net.UDPAddr, id metadata.PeerId) (discovery.Discover
 	)
 }
 
+type udpListenFunc func(network string, address *net.UDPAddr) (*net.UDPConn, error)
+
 func newP2PNode(
 	addr *net.UDPAddr,
 	listen udpListenFunc,
@@ -184,6 +187,13 @@ func newP2PNode(
 ) (*P2PNode, error) {
 	identity, err := security.GenerateIdentity()
 	if err != nil {
+		return nil, err
+	}
+
+	// TODO store the id after, use the already generated id, and fallback to generation only if no id
+	id, err := generateNodeId()
+	if err != nil {
+		slog.Error("could not create node id", "err", err)
 		return nil, err
 	}
 
@@ -196,13 +206,6 @@ func newP2PNode(
 	boundAddr := addr
 	if localAddr, ok := udpConn.LocalAddr().(*net.UDPAddr); ok {
 		boundAddr = localAddr
-	}
-
-	// TODO store the id after, use the already generated id, and fallback to generation only if no id
-	id, err := generateNodeId()
-	if err != nil {
-		slog.Error("could not create node id", "err", err)
-		return nil, err
 	}
 
 	mdnsDiscovery, err := discoverMDNS(boundAddr, id)
@@ -220,10 +223,10 @@ func newP2PNode(
 	ctx, cancel := context.WithCancel(context.Background())
 
 	eventManager := event.NewManager()
-	transport := &quic.Transport{Conn: udpConn}
+	quicTransport := &quic.Transport{Conn: udpConn}
 	transferManager := transfer.NewManager(boundAddr, openReader, eventManager.EmitEvent, ctx, cancel)
-	receiver := newReceiver(transport, transferManager.Receive)
-	sender := newSender(transport, boundAddr, transferManager.Send)
+	receiver := transport.NewReceiver(quicTransport, transferManager.Receive)
+	sender := transport.NewSender(quicTransport, boundAddr, transferManager.Send)
 
 	peerManager, err := discovery.NewPeerManager(id, mdnsDiscovery)
 	if err != nil {
@@ -233,13 +236,13 @@ func newP2PNode(
 
 	return &P2PNode{
 		nodeId:     id,
-		identity:   identity,
 		addr:       boundAddr,
+		identity:   identity,
 		clientTLS:  clientTLS,
 		serverTLS:  serverTLS,
 		quicConfig: quicConfig,
 
-		transport: transport,
+		transport: quicTransport,
 		receiver:  receiver,
 		sender:    sender,
 

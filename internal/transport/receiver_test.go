@@ -1,4 +1,4 @@
-package node
+package transport
 
 import (
 	"airlink/internal/transfer"
@@ -25,8 +25,10 @@ func TestNewReceiver(t *testing.T) {
 		return "transfer-123", nil
 	}
 
-	receiver := newReceiver(transport, receive)
+	transportReceiver := NewReceiver(transport, receive)
+	receiver, ok := transportReceiver.(*receiver)
 
+	require.True(t, ok)
 	require.NotNil(t, receiver)
 	require.NotNil(t, receiver.listen)
 	require.NotNil(t, receiver.receive)
@@ -363,7 +365,7 @@ func TestReceiverListen(t *testing.T) {
 			t.Fatal("first listener accept loop did not start")
 		}
 
-		receiver.Cleanup()
+		receiver.CleanUp()
 
 		receiver.mu.Lock()
 		isListening := receiver.isListening
@@ -475,7 +477,7 @@ func TestReceiverCleanup(t *testing.T) {
 		receiver := &receiver{}
 
 		assert.NotPanics(t, func() {
-			receiver.Cleanup()
+			receiver.CleanUp()
 		})
 	})
 
@@ -499,7 +501,7 @@ func TestReceiverCleanup(t *testing.T) {
 			isListening: true,
 		}
 
-		receiver.Cleanup()
+		receiver.CleanUp()
 
 		assert.True(t, closed)
 		assert.Nil(t, receiver.listener)
@@ -552,7 +554,7 @@ func TestReceiverCleanup(t *testing.T) {
 			},
 		}
 
-		receiver.Cleanup()
+		receiver.CleanUp()
 
 		mu.Lock()
 		assert.ElementsMatch(t, []Conn{conn1, conn2}, closedConnections)

@@ -1,36 +1,11 @@
-package node
+package transport
 
 import (
-	"airlink/internal/discovery"
 	"airlink/internal/transfer"
 	"context"
-	"crypto/tls"
-	"errors"
-	"net"
-	"time"
 
 	"github.com/quic-go/quic-go"
 )
-
-const testIP = "127.0.0.1"
-
-func testAddr() net.Addr {
-	return &net.UDPAddr{
-		IP:   net.ParseIP(testIP),
-		Port: 54321,
-	}
-}
-
-func getTestQuicConfig() *quic.Config {
-	return &quic.Config{
-		MaxIdleTimeout:  30 * time.Second,
-		KeepAlivePeriod: 15 * time.Second,
-	}
-}
-
-func mockDialErr(_ context.Context, _ net.Addr, _ *tls.Config, _ *quic.Config) (Conn, error) {
-	return nil, errors.New("mock dial connection failed")
-}
 
 type mockStream struct {
 	writeFunc func([]byte) (int, error)
@@ -87,26 +62,4 @@ func (l *mockListener) Accept(ctx context.Context) (Conn, error) {
 
 func (l *mockListener) Close() error {
 	return l.closeFunc()
-}
-
-type mockMDNSDiscovery struct {
-	start    func() error
-	stop     func() error
-	discover func() ([]discovery.Peer, error)
-}
-
-func (d *mockMDNSDiscovery) Start() error {
-	return d.start()
-}
-
-func (d *mockMDNSDiscovery) Stop() error {
-	return d.stop()
-}
-
-func (d *mockMDNSDiscovery) Discover() ([]discovery.Peer, error) {
-	if d.discover == nil {
-		return nil, nil
-	}
-
-	return d.discover()
 }
