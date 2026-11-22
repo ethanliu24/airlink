@@ -1,4 +1,4 @@
-package node
+package transport
 
 import (
 	"airlink/internal/transfer"
@@ -13,8 +13,18 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-var MAX_HANDSHAKE_TIMEOUT_SECONDS = 3 * time.Second
-var FILE_READ_CHUNK_SIZE_BYTES = 1024 * 64
+const (
+	maxHandshakeTimeoutSeconds = 3 * time.Second
+)
+
+type Sender interface {
+	Send(*net.UDPAddr, string, *tls.Config, *quic.Config) error
+	CleanUp()
+}
+
+type dialFunc func(context.Context, net.Addr, *tls.Config, *quic.Config) (Conn, error)
+
+type sendFunc func(stream transfer.TransferStream, filename string) (transfer.TransferId, error)
 
 type sender struct {
 	dial  dialFunc
@@ -57,7 +67,7 @@ func (s *sender) Send(
 	tlsConfig *tls.Config,
 	quicConfig *quic.Config,
 ) error {
-	ctx, cancel := context.WithTimeout(context.Background(), MAX_HANDSHAKE_TIMEOUT_SECONDS)
+	ctx, cancel := context.WithTimeout(context.Background(), maxHandshakeTimeoutSeconds)
 	defer cancel()
 
 	addr := receiverAddr.String()
@@ -76,7 +86,7 @@ func (s *sender) Send(
 	return nil
 }
 
-func (s *sender) Cleanup() {
+func (s *sender) CleanUp() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -86,7 +96,7 @@ func (s *sender) Cleanup() {
 	}
 }
 
-func newSender(transport *quic.Transport, addr net.Addr, send sendFunc) *sender {
+func NewSender(transport *quic.Transport, addr net.Addr, send sendFunc) Sender {
 	return &sender{
 		dial: func(ctx context.Context, addr net.Addr, tlsConf *tls.Config, conf *quic.Config) (Conn, error) {
 			conn, err := transport.Dial(ctx, addr, tlsConf, conf)

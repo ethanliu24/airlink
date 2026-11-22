@@ -5,6 +5,7 @@ import (
 	"airlink/internal/event"
 	"airlink/internal/file"
 	"airlink/internal/metadata"
+	"airlink/internal/transport"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -25,6 +26,32 @@ const NODE_TEST_IP = "127.0.0.1"
 
 const nodeTestTimeout = 2 * time.Second
 
+type mockReceiver struct {
+	listenFunc  func(tlsCfg *tls.Config, quicCfg *quic.Config) error
+	cleanUpFunc func()
+}
+
+func (m *mockReceiver) Listen(tlsCfg *tls.Config, quicCfg *quic.Config) error {
+	return m.listenFunc(tlsCfg, quicCfg)
+}
+
+func (m *mockReceiver) CleanUp() {
+	m.cleanUpFunc()
+}
+
+type mockListener struct {
+	acceptFunc func(context.Context) (transport.Conn, error)
+	closeFunc  func() error
+}
+
+func (l *mockListener) Accept(ctx context.Context) (transport.Conn, error) {
+	return l.acceptFunc(ctx)
+}
+
+func (l *mockListener) Close() error {
+	return l.closeFunc()
+}
+
 func mockListen(network string, address *net.UDPAddr) (*net.UDPConn, error) {
 	return &net.UDPConn{}, nil
 }
@@ -40,6 +67,28 @@ func toUDPAddress(ip string, port int) (*net.UDPAddr, error) {
 
 type nodeTestEventPayload struct {
 	Message string `json:"message"`
+}
+
+type mockMDNSDiscovery struct {
+	start    func() error
+	stop     func() error
+	discover func() ([]discovery.Peer, error)
+}
+
+func (d *mockMDNSDiscovery) Start() error {
+	return d.start()
+}
+
+func (d *mockMDNSDiscovery) Stop() error {
+	return d.stop()
+}
+
+func (d *mockMDNSDiscovery) Discover() ([]discovery.Peer, error) {
+	if d.discover == nil {
+		return nil, nil
+	}
+
+	return d.discover()
 }
 
 func newNoopMDNSDiscovery(
@@ -61,13 +110,9 @@ func newStartedTestNode(t *testing.T) *P2PNode {
 	node, err := newP2PNode(addr, mockListen, mockOpenReader, newNoopMDNSDiscovery)
 	require.NoError(t, err)
 
-	node.receiver.listen = func(_ *tls.Config, _ *quic.Config) (Listener, error) {
-		return &mockListener{
-			acceptFunc: func(context.Context) (Conn, error) {
-				return nil, errors.New("listener closed")
-			},
-			closeFunc: func() error { return nil },
-		}, nil
+	node.receiver = &mockReceiver{
+		listenFunc: func(tlsCfg *tls.Config, quicCfg *quic.Config) error { return nil },
+		cleanUpFunc: func() {},
 	}
 
 	err = node.Start()
@@ -164,17 +209,15 @@ func TestP2PNodeStartBeginsDiscoveryAfterListening(t *testing.T) {
 			return mdns, nil
 		},
 	)
-	require.NoError(t, err)
-
-	node.receiver.listen = func(_ *tls.Config, _ *quic.Config) (Listener, error) {
-		order = append(order, "listener")
-		return &mockListener{
-			acceptFunc: func(context.Context) (Conn, error) {
-				return nil, errors.New("listener closed")
-			},
-			closeFunc: func() error { return nil },
-		}, nil
+	node.receiver = &mockReceiver{
+		listenFunc: func(tlsCfg *tls.Config, quicCfg *quic.Config) error {
+			order = append(order, "listener")
+			return nil
+		},
+		cleanUpFunc: func() {},
 	}
+
+	require.NoError(t, err)
 
 	require.NoError(t, node.Start())
 	assert.Equal(t, []string{"listener", "discovery"}, order)
@@ -202,10 +245,6 @@ func TestP2PNodeStartDoesNotAdvertiseWhenListeningFails(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-
-	node.receiver.listen = func(_ *tls.Config, _ *quic.Config) (Listener, error) {
-		return nil, errors.New("listen failed")
-	}
 
 	require.Error(t, node.Start())
 	assert.False(t, started)

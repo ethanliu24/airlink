@@ -1,4 +1,4 @@
-package node
+package transport
 
 import (
 	"airlink/internal/transfer"
@@ -13,6 +13,20 @@ import (
 )
 
 var ReceiverAlreadyListeningError = errors.New("receiver is already listening")
+
+type Listener interface {
+	Accept(context.Context) (Conn, error)
+	Close() error
+}
+
+type listenFunc func(*tls.Config, *quic.Config) (Listener, error)
+
+type Receiver interface {
+	Listen(*tls.Config, *quic.Config) error
+	CleanUp()
+}
+
+type receiveFunc func(stream transfer.TransferStream) (transfer.TransferId, error)
 
 type receiver struct {
 	listen      listenFunc
@@ -90,7 +104,7 @@ func (r *receiver) Listen(tlsConfig *tls.Config, quicConfig *quic.Config) error 
 	return nil
 }
 
-func (r *receiver) Cleanup() {
+func (r *receiver) CleanUp() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -107,7 +121,7 @@ func (r *receiver) Cleanup() {
 	r.isListening = false
 }
 
-func newReceiver(transport *quic.Transport, receive receiveFunc) *receiver {
+func NewReceiver(transport *quic.Transport, receive receiveFunc) Receiver {
 	return &receiver{
 		listen: func(tlsConfig *tls.Config, quicConfig *quic.Config) (Listener, error) {
 			listener, err := transport.Listen(tlsConfig, quicConfig)

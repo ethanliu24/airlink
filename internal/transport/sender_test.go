@@ -1,4 +1,4 @@
-package node
+package transport
 
 import (
 	"airlink/internal/security"
@@ -16,16 +16,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const SENDER_TEST_IP = "127.0.0.1"
+const senderTestIP = "127.0.0.1"
 
 var tlsConfig *tls.Config = security.GenerateTestTLSConfig()
 var quicConfig *quic.Config = getTestQuicConfig()
 
 func senderTestAddr() net.Addr {
 	return &net.UDPAddr{
-		IP:   net.ParseIP(SENDER_TEST_IP),
+		IP:   net.ParseIP(senderTestIP),
 		Port: 54321,
 	}
+}
+
+func getTestQuicConfig() *quic.Config {
+	return &quic.Config{
+		MaxIdleTimeout:  30 * time.Second,
+		KeepAlivePeriod: 15 * time.Second,
+	}
+}
+
+func mockDialErr(_ context.Context, _ net.Addr, _ *tls.Config, _ *quic.Config) (Conn, error) {
+	return nil, errors.New("mock dial connection failed")
 }
 
 func TestNewSender(t *testing.T) {
@@ -37,12 +48,15 @@ func TestNewSender(t *testing.T) {
 		return "transfer-123", nil
 	}
 
-	sender := newSender(
+	transportSender := NewSender(
 		transport,
 		senderTestAddr(),
 		send,
 	)
 
+	sender, ok := transportSender.(*sender)
+
+	require.True(t, ok)
 	require.NotNil(t, sender)
 	require.NotNil(t, sender.dial)
 	require.NotNil(t, sender.conns)
@@ -58,7 +72,7 @@ func TestSend(t *testing.T) {
 		t.Parallel()
 
 		addr := &net.UDPAddr{
-			IP:   net.ParseIP(SENDER_TEST_IP),
+			IP:   net.ParseIP(senderTestIP),
 			Port: 12345,
 		}
 
@@ -85,7 +99,7 @@ func TestSend(t *testing.T) {
 		t.Parallel()
 
 		addr := &net.UDPAddr{
-			IP:   net.ParseIP(SENDER_TEST_IP),
+			IP:   net.ParseIP(senderTestIP),
 			Port: 12345,
 		}
 
@@ -155,7 +169,7 @@ func TestSend(t *testing.T) {
 		t.Parallel()
 
 		addr := &net.UDPAddr{
-			IP:   net.ParseIP(SENDER_TEST_IP),
+			IP:   net.ParseIP(senderTestIP),
 			Port: 12345,
 		}
 
@@ -312,7 +326,7 @@ func TestCleanup(t *testing.T) {
 		},
 	}
 
-	sender.Cleanup()
+	sender.CleanUp()
 
 	assert.Empty(t, sender.conns)
 
@@ -329,7 +343,7 @@ func TestCleanupEmpty(t *testing.T) {
 	}
 
 	assert.NotPanics(t, func() {
-		sender.Cleanup()
+		sender.CleanUp()
 	})
 
 	assert.Empty(t, sender.conns)
