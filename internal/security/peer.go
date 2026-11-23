@@ -1,13 +1,12 @@
 package security
 
 import (
+	"airlink/internal/metadata"
 	"crypto/sha256"
 	"crypto/x509"
 	"fmt"
 	"strings"
 )
-
-const maxPeerIDLength = 128
 
 type PeerIdentity struct {
 	peerID      string
@@ -27,7 +26,7 @@ func NewPeerIdentity(peerId string, certificate *x509.Certificate) (*PeerIdentit
 		return nil, fmt.Errorf("peer identity: peer ID is empty")
 	}
 
-	if len(peerId) > maxPeerIDLength {
+	if len(peerId) > metadata.MaxPeerIDLength {
 		return nil, fmt.Errorf("peer identity: peer ID exceeds maximum length")
 	}
 
