@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "airlink/internal/security/models";
+
+message PeerHello {
+    uint32 protocol_version = 1;
+    string peer_id = 2;
+}

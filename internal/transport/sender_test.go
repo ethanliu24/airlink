@@ -1,10 +1,15 @@
 package transport
 
 import (
+	"airlink/internal/metadata"
 	"airlink/internal/security"
+	"airlink/internal/security/models"
 	"airlink/internal/transfer"
+	"airlink/internal/wire"
+	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"net"
 	"sync"
@@ -39,6 +44,60 @@ func mockDialErr(_ context.Context, _ net.Addr, _ *tls.Config, _ *quic.Config) (
 	return nil, errors.New("mock dial connection failed")
 }
 
+func newSenderAuthStream(
+	t *testing.T,
+	remotePeerID string,
+	version uint32,
+) (*mockStream, *bytes.Buffer, *mockStreamState) {
+	t.Helper()
+
+	// Prepare the simulated remote response.
+	incoming := &bytes.Buffer{}
+
+	require.NoError(t, wire.WriteMessage(incoming, &models.PeerHello{
+		PeerId:          remotePeerID,
+		ProtocolVersion: version,
+	}))
+
+	reader := bytes.NewReader(incoming.Bytes())
+	outgoing := &bytes.Buffer{}
+
+	state := &mockStreamState{}
+
+	stream := &mockStream{
+		readFunc:  reader.Read,
+		writeFunc: outgoing.Write,
+
+		closeFunc: func() error {
+			state.closed = true
+			return nil
+		},
+
+		abortFunc: func() {},
+
+		setDeadlineFunc: func(deadline time.Time) error {
+			state.deadlineSet = true
+			state.deadline = deadline
+			return nil
+		},
+	}
+
+	return stream, outgoing, state
+}
+
+func newSenderTLSState(t *testing.T) (*security.Identity, tls.ConnectionState) {
+	t.Helper()
+
+	identity, err := security.GenerateIdentity()
+	require.NoError(t, err)
+
+	cert := identity.TLSCertificate().Leaf
+
+	return identity, tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{cert},
+	}
+}
+
 func TestNewSender(t *testing.T) {
 	t.Parallel()
 
@@ -49,8 +108,8 @@ func TestNewSender(t *testing.T) {
 	}
 
 	transportSender := NewSender(
+		"test",
 		transport,
-		senderTestAddr(),
 		send,
 	)
 
@@ -71,12 +130,9 @@ func TestSend(t *testing.T) {
 	t.Run("dial error", func(t *testing.T) {
 		t.Parallel()
 
-		addr := &net.UDPAddr{
-			IP:   net.ParseIP(senderTestIP),
-			Port: 12345,
-		}
+		addr := senderTestAddr().(*net.UDPAddr)
 
-		var sendCalled bool
+		sendCalled := false
 
 		sender := &sender{
 			dial:  mockDialErr,
@@ -95,24 +151,250 @@ func TestSend(t *testing.T) {
 		assert.False(t, sendCalled)
 	})
 
-	t.Run("successful dial and transfer delegation", func(t *testing.T) {
+	t.Run("authentication stream error", func(t *testing.T) {
 		t.Parallel()
 
-		addr := &net.UDPAddr{
-			IP:   net.ParseIP(senderTestIP),
-			Port: 12345,
+		expectedErr := errors.New("open authentication stream failed")
+
+		closeCalled := make(chan struct{}, 1)
+		sendCalled := make(chan struct{}, 1)
+
+		conn := &mockConn{
+			openStreamSyncFunc: func(
+				context.Context,
+			) (transfer.TransferStream, error) {
+				return nil, expectedErr
+			},
+			closeWithErrFunc: func(
+				quic.ApplicationErrorCode,
+				string,
+			) error {
+				closeCalled <- struct{}{}
+				return nil
+			},
 		}
+
+		sender := &sender{
+			id: metadata.PeerId("sender-peer"),
+			dial: func(
+				context.Context,
+				net.Addr,
+				*tls.Config,
+				*quic.Config,
+			) (Conn, error) {
+				return conn, nil
+			},
+			conns: make(map[string]Conn),
+			send: func(transfer.TransferStream, string) (transfer.TransferId, error) {
+				sendCalled <- struct{}{}
+				return "", nil
+			},
+		}
+
+		err := sender.Send(
+			senderTestAddr().(*net.UDPAddr),
+			"test.txt",
+			tlsConfig,
+			quicConfig,
+		)
+
+		require.ErrorIs(t, err, expectedErr)
+		assert.Empty(t, sender.conns)
+
+		select {
+		case <-closeCalled:
+			// Connection was closed after authentication setup failed.
+		default:
+			t.Fatal("expected connection to be closed")
+		}
+
+		select {
+		case <-sendCalled:
+			t.Fatal("transfer should not start after authentication failure")
+		default:
+		}
+	})
+
+	t.Run("authentication deadline error", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("set deadline failed")
+
+		authStream := &mockStream{
+			closeFunc: func() error {
+				return nil
+			},
+			setDeadlineFunc: func(time.Time) error {
+				return expectedErr
+			},
+		}
+
+		closeCalled := make(chan struct{}, 1)
+
+		conn := &mockConn{
+			openStreamSyncFunc: func(
+				context.Context,
+			) (transfer.TransferStream, error) {
+				return authStream, nil
+			},
+
+			closeWithErrFunc: func(
+				quic.ApplicationErrorCode,
+				string,
+			) error {
+				closeCalled <- struct{}{}
+				return nil
+			},
+		}
+
+		sender := &sender{
+			id: metadata.PeerId("sender-peer"),
+			dial: func(
+				context.Context,
+				net.Addr,
+				*tls.Config,
+				*quic.Config,
+			) (Conn, error) {
+				return conn, nil
+			},
+			conns: make(map[string]Conn),
+			send: func(transfer.TransferStream, string) (transfer.TransferId, error) {
+				return "", nil
+			},
+		}
+
+		err := sender.Send(
+			senderTestAddr().(*net.UDPAddr),
+			"test.txt",
+			tlsConfig,
+			quicConfig,
+		)
+
+		require.ErrorIs(t, err, expectedErr)
+		assert.Empty(t, sender.conns)
+		assert.True(t, closeCalled != nil)
+
+		select {
+		case <-closeCalled:
+		default:
+			t.Fatal("expected connection to be closed")
+		}
+	})
+
+	t.Run("peer identity exchange error", func(t *testing.T) {
+		t.Parallel()
+
+		remoteIdentity, connectionState := newSenderTLSState(t)
+		authStream, _, streamState := newSenderAuthStream(
+			t,
+			"remote-peer",
+			protocolVersion+1,
+		)
+
+		closeCalled := make(chan struct{}, 1)
+
+		conn := &mockConn{
+			openStreamSyncFunc: func(
+				context.Context,
+			) (transfer.TransferStream, error) {
+				return authStream, nil
+			},
+
+			connectionStateFunc: func() tls.ConnectionState {
+				return connectionState
+			},
+
+			closeWithErrFunc: func(
+				quic.ApplicationErrorCode,
+				string,
+			) error {
+				closeCalled <- struct{}{}
+				return nil
+			},
+		}
+
+		sendCalled := false
+
+		sender := &sender{
+			id: metadata.PeerId(testLocalPeerID),
+			dial: func(
+				context.Context,
+				net.Addr,
+				*tls.Config,
+				*quic.Config,
+			) (Conn, error) {
+				return conn, nil
+			},
+			conns: make(map[string]Conn),
+			send: func(transfer.TransferStream, string) (transfer.TransferId, error) {
+				sendCalled = true
+				return "", nil
+			},
+		}
+
+		require.NotNil(t, remoteIdentity)
+
+		err := sender.Send(
+			senderTestAddr().(*net.UDPAddr),
+			"test.txt",
+			tlsConfig,
+			quicConfig,
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported peer protocol version")
+		assert.Empty(t, sender.conns)
+		assert.False(t, sendCalled)
+		assert.True(t, streamState.closed)
+
+		select {
+		case <-closeCalled:
+		default:
+			t.Fatal("expected connection to be closed after exchange failure")
+		}
+	})
+
+	t.Run("successful identity exchange and transfer delegation", func(t *testing.T) {
+		t.Parallel()
 
 		const (
 			filename   = "test.txt"
 			transferID = "transfer-123"
+			localID    = metadata.PeerId(testLocalPeerID)
+			remoteID   = metadata.PeerId(testRemotePeerID)
 		)
 
-		stream := &mockStream{}
+		remoteIdentity, connectionState := newSenderTLSState(t)
+		authStream, outgoing, authState := newSenderAuthStream(
+			t,
+			remoteID,
+			protocolVersion,
+		)
+
+		transferStream := &mockStream{
+			closeFunc: func() error {
+				return nil
+			},
+		}
 
 		expectedConn := &mockConn{
+			openStreamSyncFunc: func(
+				context.Context,
+			) (transfer.TransferStream, error) {
+				return authStream, nil
+			},
+			connectionStateFunc: func() tls.ConnectionState {
+				return connectionState
+			},
 			openStreamFunc: func() (transfer.TransferStream, error) {
-				return stream, nil
+				return transferStream, nil
+			},
+			closeWithErrFunc: func(
+				code quic.ApplicationErrorCode,
+				message string,
+			) error {
+				t.Errorf("CloseWithError unexpectedly called: %s", message)
+				return nil
 			},
 		}
 
@@ -124,16 +406,20 @@ func TestSend(t *testing.T) {
 		sendCalled := make(chan sendCall, 1)
 
 		sender := &sender{
+			id: localID,
 			dial: func(
-				_ context.Context,
-				_ net.Addr,
-				_ *tls.Config,
-				_ *quic.Config,
+				context.Context,
+				net.Addr,
+				*tls.Config,
+				*quic.Config,
 			) (Conn, error) {
 				return expectedConn, nil
 			},
 			conns: make(map[string]Conn),
-			send: func(gotStream transfer.TransferStream, gotFilename string) (transfer.TransferId, error) {
+			send: func(
+				gotStream transfer.TransferStream,
+				gotFilename string,
+			) (transfer.TransferId, error) {
 				sendCalled <- sendCall{
 					stream:   gotStream,
 					filename: gotFilename,
@@ -143,13 +429,34 @@ func TestSend(t *testing.T) {
 			},
 		}
 
-		err := sender.Send(addr, filename, tlsConfig, quicConfig)
+		err := sender.Send(
+			senderTestAddr().(*net.UDPAddr),
+			filename,
+			tlsConfig,
+			quicConfig,
+		)
+
 		require.NoError(t, err)
 
-		// Wait for the asynchronous transfer delegation.
+		// Verify authentication stream lifecycle.
+		assert.True(t, authState.closed)
+		assert.True(t, authState.deadlineSet)
+		assert.False(t, authState.deadline.IsZero())
+
+		// Verify outgoing PeerHello.
+		var hello models.PeerHello
+		require.NoError(t, wire.ReadMessage(outgoing, &hello))
+
+		assert.Equal(t, string(localID), hello.GetPeerId())
+		assert.Equal(t, protocolVersion, hello.GetProtocolVersion())
+
+		// Verify remote identity was available in the TLS state.
+		assert.NotNil(t, remoteIdentity)
+
+		// Wait for asynchronous transfer delegation.
 		select {
 		case call := <-sendCalled:
-			assert.Same(t, stream, call.stream)
+			assert.Same(t, transferStream, call.stream)
 			assert.Equal(t, filename, call.filename)
 
 		case <-time.After(2 * time.Second):
@@ -158,63 +465,71 @@ func TestSend(t *testing.T) {
 
 		// Verify connection registration.
 		sender.mu.Lock()
-		conn, exists := sender.conns[addr.String()]
+		conn, exists := sender.conns[senderTestAddr().String()]
 		sender.mu.Unlock()
 
 		require.True(t, exists)
 		assert.Same(t, expectedConn, conn)
 	})
 
-	t.Run("open stream error", func(t *testing.T) {
+	t.Run("transfer stream open error", func(t *testing.T) {
 		t.Parallel()
 
-		addr := &net.UDPAddr{
-			IP:   net.ParseIP(senderTestIP),
-			Port: 12345,
-		}
+		_, connectionState := newSenderTLSState(t)
 
-		expectedErr := errors.New("open stream failed")
-		openAttempted := make(chan struct{})
+		authStream, _, _ := newSenderAuthStream(
+			t,
+			testLocalPeerID,
+			protocolVersion,
+		)
 
-		var sendCalled bool
-		var sendMu sync.Mutex
+		openAttempted := make(chan struct{}, 1)
 
 		conn := &mockConn{
+			openStreamSyncFunc: func(ctx context.Context) (transfer.TransferStream, error) {
+				return authStream, nil
+			},
 			openStreamFunc: func() (transfer.TransferStream, error) {
-				close(openAttempted)
-				return nil, expectedErr
+				openAttempted <- struct{}{}
+				return nil, errors.New("transfer stream open failed")
+			},
+			connectionStateFunc: func() tls.ConnectionState {
+				return connectionState
 			},
 		}
 
+		sendCalled := make(chan struct{}, 1)
+
 		sender := &sender{
+			id: metadata.PeerId(testRemotePeerID),
 			dial: func(
-				_ context.Context,
-				_ net.Addr,
-				_ *tls.Config,
-				_ *quic.Config,
+				context.Context,
+				net.Addr,
+				*tls.Config,
+				*quic.Config,
 			) (Conn, error) {
 				return conn, nil
 			},
 			conns: make(map[string]Conn),
 			send: func(transfer.TransferStream, string) (transfer.TransferId, error) {
-				sendMu.Lock()
-				sendCalled = true
-				sendMu.Unlock()
-
+				sendCalled <- struct{}{}
 				return "", nil
 			},
 		}
 
+		addr := senderTestAddr().(*net.UDPAddr)
+
 		err := sender.Send(addr, "test.txt", tlsConfig, quicConfig)
 		require.NoError(t, err)
 
+		// Transfer stream creation happens asynchronously.
 		select {
 		case <-openAttempted:
 		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for OpenStream")
+			t.Fatal("timed out waiting for transfer stream creation")
 		}
 
-		// Verify connection registration.
+		// Connection should remain registered because identity exchange succeeded.
 		sender.mu.Lock()
 		storedConn, exists := sender.conns[addr.String()]
 		sender.mu.Unlock()
@@ -222,9 +537,12 @@ func TestSend(t *testing.T) {
 		require.True(t, exists)
 		assert.Same(t, conn, storedConn)
 
-		sendMu.Lock()
-		assert.False(t, sendCalled)
-		sendMu.Unlock()
+		// Transfer manager should not be called when stream creation fails.
+		select {
+		case <-sendCalled:
+			t.Fatal("send manager called despite stream creation failure")
+		default:
+		}
 	})
 }
 

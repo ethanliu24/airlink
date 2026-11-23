@@ -20,6 +20,7 @@ type TransferId = string
 type TransferStream interface {
 	io.ReadWriteCloser
 	Abort()
+	SetDeadline(time.Time) error
 }
 
 type TransferResult interface {

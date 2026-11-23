@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"airlink/internal/metadata"
+	"airlink/internal/security"
 	"airlink/internal/transfer"
 	"context"
 	"crypto/tls"
@@ -29,6 +31,7 @@ type Receiver interface {
 type receiveFunc func(stream transfer.TransferStream) (transfer.TransferId, error)
 
 type receiver struct {
+	id          metadata.PeerId
 	listen      listenFunc
 	listener    Listener
 	isListening bool
@@ -54,12 +57,41 @@ func (r *receiver) handleConnection(conn Conn) {
 	for {
 		stream, err := conn.AcceptStream(context.Background())
 		if err != nil {
-			slog.Debug("receiver connection closed", "err", err, "errType", fmt.Sprintf("%T", err))
+			slog.Error("receiver connection closed", "err", err, "errType", fmt.Sprintf("%T", err))
 			break
 		}
 
 		go r.handleStream(stream)
 	}
+}
+
+func (r *receiver) authenticatePeer(conn Conn) (*security.PeerIdentity, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), maxHandshakeTimeoutSeconds)
+	defer cancel()
+
+	authStream, err := conn.AcceptStream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("accept auth stream: %w", err)
+	}
+
+	defer authStream.Close()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := authStream.SetDeadline(deadline); err != nil {
+			return nil, fmt.Errorf("set auth stream deadline: %w", err)
+		}
+	}
+
+	peerIdentity, err := exchangePeerIdentity(
+		authStream,
+		r.id,
+		conn.ConnectionState(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("exchange peer identity: %w", err)
+	}
+
+	return peerIdentity, nil
 }
 
 func (r *receiver) recieve(listener Listener) {
@@ -68,6 +100,13 @@ func (r *receiver) recieve(listener Listener) {
 		if err != nil {
 			slog.Error("receiver listener could not accept", "err", err)
 			break
+		}
+
+		_, err = r.authenticatePeer(conn)
+		if err != nil {
+			slog.Error("peer authentication failed", "err", err)
+			_ = conn.CloseWithError(0, "peer identity exchange failed")
+			continue
 		}
 
 		r.mu.Lock()
@@ -121,8 +160,9 @@ func (r *receiver) CleanUp() {
 	r.isListening = false
 }
 
-func NewReceiver(transport *quic.Transport, receive receiveFunc) Receiver {
+func NewReceiver(id metadata.PeerId, transport *quic.Transport, receive receiveFunc) Receiver {
 	return &receiver{
+		id: id,
 		listen: func(tlsConfig *tls.Config, quicConfig *quic.Config) (Listener, error) {
 			listener, err := transport.Listen(tlsConfig, quicConfig)
 			if err != nil {

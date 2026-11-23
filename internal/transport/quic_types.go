@@ -3,6 +3,8 @@ package transport
 import (
 	"airlink/internal/transfer"
 	"context"
+	"crypto/tls"
+	"time"
 
 	"github.com/quic-go/quic-go"
 )
@@ -38,6 +40,19 @@ func (c *quicConn) CloseWithError(code quic.ApplicationErrorCode, msg string) er
 	return c.conn.CloseWithError(code, msg)
 }
 
+func (c *quicConn) OpenStreamSync(ctx context.Context) (transfer.TransferStream, error) {
+	stream, err := c.conn.OpenStreamSync(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &quicStream{stream: stream}, nil
+}
+
+func (c *quicConn) ConnectionState() tls.ConnectionState {
+	return c.conn.ConnectionState().TLS
+}
+
 type quicStream struct {
 	stream *quic.Stream
 }
@@ -52,6 +67,10 @@ func (s *quicStream) Write(data []byte) (int, error) {
 
 func (s *quicStream) Close() error {
 	return s.stream.Close()
+}
+
+func (s *quicStream) SetDeadline(time time.Time) error {
+	return s.stream.SetDeadline(time)
 }
 
 func (s *quicStream) Abort() {

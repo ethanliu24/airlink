@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"airlink/internal/metadata"
 	"airlink/internal/transfer"
 	"context"
 	"crypto/tls"
@@ -8,13 +9,8 @@ import (
 	"log/slog"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/quic-go/quic-go"
-)
-
-const (
-	maxHandshakeTimeoutSeconds = 3 * time.Second
 )
 
 type Sender interface {
@@ -27,6 +23,7 @@ type dialFunc func(context.Context, net.Addr, *tls.Config, *quic.Config) (Conn, 
 type sendFunc func(stream transfer.TransferStream, filename string) (transfer.TransferId, error)
 
 type sender struct {
+	id    metadata.PeerId
 	dial  dialFunc
 	mu    sync.Mutex
 	conns map[string]Conn
@@ -77,6 +74,27 @@ func (s *sender) Send(
 		return err
 	}
 
+	authStream, err := conn.OpenStreamSync(ctx)
+	if err != nil {
+		_ = conn.CloseWithError(0x0, "peer identity stream failed")
+		return err
+	}
+
+	defer authStream.Close()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := authStream.SetDeadline(deadline); err != nil {
+			_ = conn.CloseWithError(0, "peer identity setup failed")
+			return err
+		}
+	}
+
+	_, err = exchangePeerIdentity(authStream, s.id, conn.ConnectionState())
+	if err != nil {
+		conn.CloseWithError(0, "peer identity exchange failed")
+		return err
+	}
+
 	s.mu.Lock()
 	s.conns[addr] = conn
 	s.mu.Unlock()
@@ -96,8 +114,9 @@ func (s *sender) CleanUp() {
 	}
 }
 
-func NewSender(transport *quic.Transport, addr net.Addr, send sendFunc) Sender {
+func NewSender(id metadata.PeerId, transport *quic.Transport, send sendFunc) Sender {
 	return &sender{
+		id: id,
 		dial: func(ctx context.Context, addr net.Addr, tlsConf *tls.Config, conf *quic.Config) (Conn, error) {
 			conn, err := transport.Dial(ctx, addr, tlsConf, conf)
 			if err != nil {

@@ -1,9 +1,15 @@
 package transport
 
 import (
+	"airlink/internal/metadata"
+	"airlink/internal/security"
+	"airlink/internal/security/models"
 	"airlink/internal/transfer"
+	"airlink/internal/wire"
+	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"sync"
 	"testing"
@@ -16,6 +22,60 @@ import (
 
 const receiverTestTimeout = 2 * time.Second
 
+func newReceiverAuthStream(
+	t *testing.T,
+	remotePeerID string,
+	version uint32,
+) (*mockStream, *bytes.Buffer, *mockStreamState) {
+	t.Helper()
+
+	incoming := &bytes.Buffer{}
+
+	require.NoError(t, wire.WriteMessage(incoming, &models.PeerHello{
+		PeerId:          remotePeerID,
+		ProtocolVersion: version,
+	}))
+
+	reader := bytes.NewReader(incoming.Bytes())
+	outgoing := &bytes.Buffer{}
+
+	state := &mockStreamState{}
+
+	stream := &mockStream{
+		readFunc:  reader.Read,
+		writeFunc: outgoing.Write,
+
+		closeFunc: func() error {
+			state.closed = true
+			return nil
+		},
+
+		abortFunc: func() {},
+
+		setDeadlineFunc: func(deadline time.Time) error {
+			state.deadlineSet = true
+			state.deadline = deadline
+			return nil
+		},
+	}
+
+	return stream, outgoing, state
+}
+
+func newReceiverTLSState(t *testing.T) (*security.Identity, tls.ConnectionState) {
+	t.Helper()
+
+	identity, err := security.GenerateIdentity()
+	require.NoError(t, err)
+
+	cert := identity.TLSCertificate().Leaf
+	require.NotNil(t, cert)
+
+	return identity, tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{cert},
+	}
+}
+
 func TestNewReceiver(t *testing.T) {
 	t.Parallel()
 
@@ -25,7 +85,7 @@ func TestNewReceiver(t *testing.T) {
 		return "transfer-123", nil
 	}
 
-	transportReceiver := NewReceiver(transport, receive)
+	transportReceiver := NewReceiver("test", transport, receive)
 	receiver, ok := transportReceiver.(*receiver)
 
 	require.True(t, ok)
@@ -219,6 +279,176 @@ func TestHandleConnection(t *testing.T) {
 	})
 }
 
+func TestReceiverAuthenticatePeer(t *testing.T) {
+	t.Parallel()
+
+	t.Run("successful authentication", func(t *testing.T) {
+		t.Parallel()
+
+		remoteID := metadata.PeerId(testRemotePeerID)
+		localID := metadata.PeerId(testLocalPeerID)
+
+		identity, connectionState := newReceiverTLSState(t)
+
+		authStream, outgoing, streamState := newReceiverAuthStream(
+			t,
+			string(remoteID),
+			protocolVersion,
+		)
+
+		acceptCalls := 0
+
+		conn := &mockConn{
+			acceptStreamFunc: func(context.Context) (transfer.TransferStream, error) {
+				acceptCalls++
+				return authStream, nil
+			},
+			connectionStateFunc: func() tls.ConnectionState {
+				return connectionState
+			},
+		}
+
+		receiver := &receiver{
+			id: localID,
+		}
+
+		remote, err := receiver.authenticatePeer(conn)
+
+		require.NoError(t, err)
+		require.NotNil(t, remote)
+
+		assert.Equal(t, remoteID, remote.PeerID())
+		assert.Equal(t, identity.Fingerprint(), remote.Fingerprint())
+		assert.Equal(t, 1, acceptCalls)
+
+		// Verify authentication stream lifecycle.
+		assert.True(t, streamState.closed)
+		assert.True(t, streamState.deadlineSet)
+		assert.False(t, streamState.deadline.IsZero())
+
+		// Verify the receiver sent its own PeerHello.
+		var sentHello models.PeerHello
+
+		require.NoError(t, wire.ReadMessage(outgoing, &sentHello))
+
+		assert.Equal(t, string(localID), sentHello.GetPeerId())
+		assert.Equal(t, protocolVersion, sentHello.GetProtocolVersion())
+	})
+
+	t.Run("accept stream error", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("accept authentication stream failed")
+
+		conn := &mockConn{
+			acceptStreamFunc: func(context.Context) (transfer.TransferStream, error) {
+				return nil, expectedErr
+			},
+		}
+
+		receiver := &receiver{
+			id: metadata.PeerId("local-peer"),
+		}
+
+		remote, err := receiver.authenticatePeer(conn)
+
+		require.ErrorIs(t, err, expectedErr)
+		assert.Nil(t, remote)
+	})
+
+	t.Run("set deadline error", func(t *testing.T) {
+		t.Parallel()
+
+		expectedErr := errors.New("set deadline failed")
+
+		authStream := &mockStream{
+			closeFunc: func() error {
+				return nil
+			},
+			setDeadlineFunc: func(time.Time) error {
+				return expectedErr
+			},
+		}
+
+		conn := &mockConn{
+			acceptStreamFunc: func(context.Context) (transfer.TransferStream, error) {
+				return authStream, nil
+			},
+		}
+
+		receiver := &receiver{
+			id: metadata.PeerId("local-peer"),
+		}
+
+		remote, err := receiver.authenticatePeer(conn)
+
+		require.ErrorIs(t, err, expectedErr)
+		assert.Nil(t, remote)
+	})
+
+	t.Run("invalid remote hello", func(t *testing.T) {
+		t.Parallel()
+
+		_, connectionState := newReceiverTLSState(t)
+
+		authStream, _, streamState := newReceiverAuthStream(
+			t,
+			testRemotePeerID,
+			protocolVersion+1,
+		)
+
+		conn := &mockConn{
+			acceptStreamFunc: func(context.Context) (transfer.TransferStream, error) {
+				return authStream, nil
+			},
+			connectionStateFunc: func() tls.ConnectionState {
+				return connectionState
+			},
+		}
+
+		receiver := &receiver{
+			id: metadata.PeerId(testLocalPeerID),
+		}
+
+		remote, err := receiver.authenticatePeer(conn)
+
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "unsupported peer protocol version")
+		assert.Nil(t, remote)
+		assert.True(t, streamState.closed)
+	})
+
+	t.Run("missing remote certificate", func(t *testing.T) {
+		t.Parallel()
+
+		authStream, _, streamState := newReceiverAuthStream(
+			t,
+			testRemotePeerID,
+			protocolVersion,
+		)
+
+		conn := &mockConn{
+			acceptStreamFunc: func(context.Context) (transfer.TransferStream, error) {
+				return authStream, nil
+			},
+			connectionStateFunc: func() tls.ConnectionState {
+				return tls.ConnectionState{}
+			},
+		}
+
+		receiver := &receiver{
+			id: metadata.PeerId(testLocalPeerID),
+		}
+
+		remote, err := receiver.authenticatePeer(conn)
+
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "no peer certificates presented")
+		assert.Nil(t, remote)
+		assert.True(t, streamState.closed)
+	})
+}
+
 func TestReceiverListen(t *testing.T) {
 	t.Parallel()
 
@@ -392,20 +622,57 @@ func TestReceiverListen(t *testing.T) {
 func TestReceiverReceive(t *testing.T) {
 	t.Parallel()
 
-	t.Run("registers accepted connection and handles it", func(t *testing.T) {
+	t.Run("authenticates connection before handling it", func(t *testing.T) {
 		t.Parallel()
+
+		localID := metadata.PeerId(testLocalPeerID)
+
+		_, connectionState := newReceiverTLSState(t)
+
+		authStream, outgoing, authState := newReceiverAuthStream(
+			t,
+			testRemotePeerID,
+			protocolVersion,
+		)
 
 		handlerStarted := make(chan struct{})
 		releaseHandler := make(chan struct{})
 		connectionClosed := make(chan struct{})
 
+		var (
+			acceptMu    sync.Mutex
+			acceptCalls int
+		)
+
 		var closeOnce sync.Once
 
 		conn := &mockConn{
 			acceptStreamFunc: func(context.Context) (transfer.TransferStream, error) {
-				close(handlerStarted)
-				<-releaseHandler
-				return nil, errors.New("connection closed")
+				acceptMu.Lock()
+				acceptCalls++
+				call := acceptCalls
+				acceptMu.Unlock()
+
+				switch call {
+				case 1:
+					// First accepted stream must be the authentication stream.
+					return authStream, nil
+
+				case 2:
+					// This call comes from handleConnection, meaning
+					// authentication completed and handling started.
+					close(handlerStarted)
+
+					<-releaseHandler
+
+					return nil, errors.New("connection closed")
+
+				default:
+					return nil, errors.New("unexpected stream accept")
+				}
+			},
+			connectionStateFunc: func() tls.ConnectionState {
+				return connectionState
 			},
 			closeWithErrFunc: func(
 				quic.ApplicationErrorCode,
@@ -414,17 +681,18 @@ func TestReceiverReceive(t *testing.T) {
 				closeOnce.Do(func() {
 					close(connectionClosed)
 				})
+
 				return nil
 			},
 		}
 
-		acceptCalls := 0
+		listenerAcceptCalls := 0
 
 		listener := &mockListener{
 			acceptFunc: func(context.Context) (Conn, error) {
-				acceptCalls++
+				listenerAcceptCalls++
 
-				if acceptCalls == 1 {
+				if listenerAcceptCalls == 1 {
 					return conn, nil
 				}
 
@@ -433,23 +701,40 @@ func TestReceiverReceive(t *testing.T) {
 		}
 
 		receiver := &receiver{
+			id:    localID,
 			conns: make(map[Conn]struct{}),
 		}
 
+		// The accept loop returns when the mock listener closes.
+		// handleConnection remains blocked until releaseHandler.
 		receiver.recieve(listener)
 
 		select {
 		case <-handlerStarted:
 		case <-time.After(receiverTestTimeout):
-			t.Fatal("connection handler did not start")
+			t.Fatal("connection handler did not start after authentication")
 		}
 
+		// Verify that the connection was registered after authentication.
 		receiver.mu.Lock()
 		_, exists := receiver.conns[conn]
 		receiver.mu.Unlock()
 
-		require.True(t, exists, "accepted connection should be registered")
+		require.True(t, exists)
 
+		// Verify authentication stream was closed.
+		assert.True(t, authState.closed)
+		assert.True(t, authState.deadlineSet)
+
+		// Verify the local identity was sent.
+		var sentHello models.PeerHello
+
+		require.NoError(t, wire.ReadMessage(outgoing, &sentHello))
+
+		assert.Equal(t, string(localID), sentHello.GetPeerId())
+		assert.Equal(t, protocolVersion, sentHello.GetProtocolVersion())
+
+		// Avoid leaking the handler goroutine.
 		close(releaseHandler)
 
 		select {
@@ -465,6 +750,81 @@ func TestReceiverReceive(t *testing.T) {
 			_, exists := receiver.conns[conn]
 			return !exists
 		}, receiverTestTimeout, time.Millisecond)
+	})
+
+	t.Run("rejects connection when authentication fails", func(t *testing.T) {
+		t.Parallel()
+
+		_, connectionState := newReceiverTLSState(t)
+
+		authStream, _, authState := newReceiverAuthStream(
+			t,
+			"remote-peer",
+			protocolVersion+1,
+		)
+
+		connectionClosed := make(chan struct{}, 1)
+		acceptCalls := 0
+
+		conn := &mockConn{
+			acceptStreamFunc: func(context.Context) (transfer.TransferStream, error) {
+				acceptCalls++
+				return authStream, nil
+			},
+
+			connectionStateFunc: func() tls.ConnectionState {
+				return connectionState
+			},
+
+			closeWithErrFunc: func(
+				quic.ApplicationErrorCode,
+				string,
+			) error {
+				connectionClosed <- struct{}{}
+				return nil
+			},
+		}
+
+		listenerAcceptCalls := 0
+
+		listener := &mockListener{
+			acceptFunc: func(context.Context) (Conn, error) {
+				listenerAcceptCalls++
+
+				if listenerAcceptCalls == 1 {
+					return conn, nil
+				}
+
+				return nil, errors.New("listener closed")
+			},
+		}
+
+		receiver := &receiver{
+			id:    metadata.PeerId("local-peer"),
+			conns: make(map[Conn]struct{}),
+		}
+
+		receiver.recieve(listener)
+
+		select {
+		case <-connectionClosed:
+		case <-time.After(receiverTestTimeout):
+			t.Fatal("connection was not closed after authentication failure")
+		}
+
+		// Failed authentication must not register the connection.
+		receiver.mu.Lock()
+		_, exists := receiver.conns[conn]
+		receiver.mu.Unlock()
+
+		assert.False(t, exists)
+
+		// handleConnection must never start.
+		assert.Equal(t, 1, acceptCalls)
+
+		// Authentication stream must still be cleaned up.
+		assert.True(t, authState.closed)
+		assert.True(t, authState.deadlineSet)
 	})
 }
 
