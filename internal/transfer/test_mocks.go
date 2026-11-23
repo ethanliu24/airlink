@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"testing/fstest"
+	"time"
 )
 
 func testAddr() net.Addr {
@@ -16,10 +17,11 @@ func testAddr() net.Addr {
 }
 
 type mockStream struct {
-	writeFunc func([]byte) (int, error)
-	readFunc  func([]byte) (int, error)
-	closeFunc func() error
-	abortFunc func()
+	writeFunc       func([]byte) (int, error)
+	readFunc        func([]byte) (int, error)
+	closeFunc       func() error
+	abortFunc       func()
+	setDeadlineFunc func(t time.Time) error
 }
 
 func (s *mockStream) Read(data []byte) (int, error) {
@@ -50,6 +52,14 @@ func (s *mockStream) Abort() {
 	if s.abortFunc != nil {
 		s.abortFunc()
 	}
+}
+
+func (s *mockStream) SetDeadline(time time.Time) error {
+	if s.setDeadlineFunc != nil {
+		return nil
+	}
+
+	return s.setDeadlineFunc(time)
 }
 
 type mockReader struct {

@@ -18,12 +18,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
 )
 
+type NodeId = metadata.PeerId
+
+type udpListenFunc func(network string, address *net.UDPAddr) (*net.UDPConn, error)
+
 type P2PNode struct {
-	nodeId     metadata.NodeId
+	nodeId     NodeId
 	addr       net.Addr
 	identity   *security.Identity
 	clientTLS  *tls.Config
@@ -42,20 +45,9 @@ type P2PNode struct {
 	discoveryMu         sync.Mutex
 }
 
-type udpListenFunc func(network string, address *net.UDPAddr) (*net.UDPConn, error)
-
 func CreateUDPAddress(ip string, port int) (*net.UDPAddr, error) {
 	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
 	return net.ResolveUDPAddr("udp", addr)
-}
-
-func generateNodeId() (metadata.PeerId, error) {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return "", err
-	}
-
-	return metadata.PeerId(id.String()), nil
 }
 
 func getQuicConfig() *quic.Config {
@@ -149,8 +141,8 @@ func newP2PNode(
 	eventManager := event.NewManager()
 	quicTransport := &quic.Transport{Conn: udpConn}
 	transferManager := transfer.NewManager(boundAddr, openReader, eventManager.EmitEvent, ctx, cancel)
-	receiver := transport.NewReceiver(quicTransport, transferManager.Receive)
-	sender := transport.NewSender(quicTransport, boundAddr, transferManager.Send)
+	receiver := transport.NewReceiver(id, quicTransport, transferManager.Receive)
+	sender := transport.NewSender(id, quicTransport, transferManager.Send)
 
 	peerManager, err := discovery.NewPeerManager(id, mdnsDiscovery)
 	if err != nil {
