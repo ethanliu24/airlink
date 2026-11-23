@@ -11,3 +11,16 @@ Share files across machines locally
 ## Compile proto files
 
 Stay at project root and run: `protoc --go_out=. --go_opt=paths=source_relative <path-to-.proto>`
+
+## Format codebase
+
+Keep Go file linting clean and consistent: `go fmt ./...`
+
+## Testing
+
+```
+$ go test ./...
+
+# for testing race conditions
+$ go test -race ./...
+```

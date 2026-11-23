@@ -122,55 +122,55 @@ func newMockReader(data string) (file.Reader, error) {
 }
 
 type mockWriter struct {
-    data         string
-    path         string
-    calls        []string
-    writeErr     error
-    shortWrite   bool
-    commitErrors []error
-    commitModes  []file.WriterCommitMode
+	data         string
+	path         string
+	calls        []string
+	writeErr     error
+	shortWrite   bool
+	commitErrors []error
+	commitModes  []file.WriterCommitMode
 }
 
 func (w *mockWriter) Write(p []byte) (int, error) {
-    if w.writeErr != nil {
-        return 0, w.writeErr
-    }
+	if w.writeErr != nil {
+		return 0, w.writeErr
+	}
 
-    if w.shortWrite && len(p) > 0 {
-        n := len(p) - 1
-        w.data += string(p[:n])
-        return n, nil
-    }
+	if w.shortWrite && len(p) > 0 {
+		n := len(p) - 1
+		w.data += string(p[:n])
+		return n, nil
+	}
 
-    w.data += string(p)
-    return len(p), nil
+	w.data += string(p)
+	return len(p), nil
 }
 
 func (w *mockWriter) Close() error {
-    w.calls = append(w.calls, "close")
-    return nil
+	w.calls = append(w.calls, "close")
+	return nil
 }
 
 func (w *mockWriter) Commit(mode file.WriterCommitMode) error {
-    w.calls = append(w.calls, "commit")
-    w.commitModes = append(w.commitModes, mode)
+	w.calls = append(w.calls, "commit")
+	w.commitModes = append(w.commitModes, mode)
 
-    if len(w.commitErrors) > 0 {
-        err := w.commitErrors[0]
-        w.commitErrors = w.commitErrors[1:]
-        return err
-    }
+	if len(w.commitErrors) > 0 {
+		err := w.commitErrors[0]
+		w.commitErrors = w.commitErrors[1:]
+		return err
+	}
 
-    return nil
+	return nil
 }
 
 func (w *mockWriter) Abort() error {
-    w.calls = append(w.calls, "abort")
-    return nil
+	w.calls = append(w.calls, "abort")
+	return nil
 }
 
 func newMockWriter(path string) (file.Writer, error) {
-    return &mockWriter{
-        path: path,
-    }, nil
+	return &mockWriter{
+		path: path,
+	}, nil
 }

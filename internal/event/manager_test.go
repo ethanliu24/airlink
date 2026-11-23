@@ -1,4 +1,3 @@
-
 package event
 
 import (
@@ -93,7 +92,7 @@ func TestStartListening(t *testing.T) {
 	}
 
 	manager := NewManager()
-	manager.RegisterEventHandler(func(event Event) error  {
+	manager.RegisterEventHandler(func(event Event) error {
 		switch event.Name() {
 		case "first.event":
 			close(firstStarted)

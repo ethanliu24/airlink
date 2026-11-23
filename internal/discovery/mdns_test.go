@@ -113,14 +113,14 @@ func TestMDNSDiscoveryDiscoverConvertsEntriesToPeers(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, peers, 1)
 
-    assert.Equal(t, Peer{
-        Id:   metadata.PeerId("peer-123"),
-        Name: "SomeDevice",
-        Address: &net.UDPAddr{
-            IP:   net.ParseIP("192.0.2.10"),
-            Port: 1111,
-        },
-    }, peers[0])
+	assert.Equal(t, Peer{
+		Id:   metadata.PeerId("peer-123"),
+		Name: "SomeDevice",
+		Address: &net.UDPAddr{
+			IP:   net.ParseIP("192.0.2.10"),
+			Port: 1111,
+		},
+	}, peers[0])
 }
 
 func TestMDNSDiscoveryDiscoverFallsBackToIPv6(t *testing.T) {
@@ -134,12 +134,12 @@ func TestMDNSDiscoveryDiscoverFallsBackToIPv6(t *testing.T) {
 
 	// Use a separate test to supply the IPv6 entry.
 	discovery.lookup = func(_ string, entries chan *MDNSServiceEntry) error {
-        entries <- &MDNSServiceEntry{
-            Name:       "Airlink-peer-123._airlink._udp.local.",
-            AddrV6:     net.ParseIP("2001:db8::1"),
-            Port:       1111,
-            InfoFields: validMDNSInfo("peer-123"),
-        }
+		entries <- &MDNSServiceEntry{
+			Name:       "Airlink-peer-123._airlink._udp.local.",
+			AddrV6:     net.ParseIP("2001:db8::1"),
+			Port:       1111,
+			InfoFields: validMDNSInfo("peer-123"),
+		}
 		return nil
 	}
 

@@ -18,9 +18,9 @@ var ErrPeerCertificateMissing = errors.New("peer certificate missing")
 
 func (i *Identity) TLSConfig() *tls.Config {
 	return &tls.Config{
-		Certificates:       []tls.Certificate{i.certificate},
-		MinVersion:         tls.VersionTLS13,
-		NextProtos:         []string{alpnProtocol},
+		Certificates: []tls.Certificate{i.certificate},
+		MinVersion:   tls.VersionTLS13,
+		NextProtos:   []string{alpnProtocol},
 		VerifyConnection: func(cs tls.ConnectionState) error {
 			if len(cs.PeerCertificates) == 0 {
 				return ErrPeerCertificateMissing

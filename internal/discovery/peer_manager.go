@@ -34,43 +34,43 @@ type PeerManager struct {
 }
 
 func (m *PeerManager) Start() error {
-    m.lifecycleMu.Lock()
-    defer m.lifecycleMu.Unlock()
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 
-    if m.started {
-        return ErrPeerManagerStarted
-    }
+	if m.started {
+		return ErrPeerManagerStarted
+	}
 
-    m.discoveryMu.Lock()
-    err := m.discovery.Start()
-    m.discoveryMu.Unlock()
+	m.discoveryMu.Lock()
+	err := m.discovery.Start()
+	m.discoveryMu.Unlock()
 
-    if err != nil {
-        return err
-    }
+	if err != nil {
+		return err
+	}
 
-    m.started = true
-    return nil
+	m.started = true
+	return nil
 }
 
 func (m *PeerManager) Stop() error {
-    m.lifecycleMu.Lock()
-    defer m.lifecycleMu.Unlock()
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 
-    if !m.started {
-        return nil
-    }
+	if !m.started {
+		return nil
+	}
 
-    m.discoveryMu.Lock()
-    err := m.discovery.Stop()
-    m.discoveryMu.Unlock()
+	m.discoveryMu.Lock()
+	err := m.discovery.Stop()
+	m.discoveryMu.Unlock()
 
-    if err != nil {
-        return err
-    }
+	if err != nil {
+		return err
+	}
 
-    m.started = false
-    return nil
+	m.started = false
+	return nil
 }
 
 func (m *PeerManager) Discover() ([]PeerRecord, error) {
@@ -113,29 +113,29 @@ func (m *PeerManager) GetPeer(id metadata.PeerId) (PeerRecord, bool) {
 }
 
 func (m *PeerManager) updatePeers(discoveredPeers []Peer, now time.Time) {
-    peers := make(map[metadata.PeerId]PeerRecord, len(discoveredPeers))
+	peers := make(map[metadata.PeerId]PeerRecord, len(discoveredPeers))
 
-    for _, peer := range discoveredPeers {
-        if peer.Id == "" || peer.Id == m.nodeId {
-            continue
-        }
+	for _, peer := range discoveredPeers {
+		if peer.Id == "" || peer.Id == m.nodeId {
+			continue
+		}
 
-        record := PeerRecord{
-            Peer:        clonePeer(peer),
-            FirstSeenAt: now,
-            LastSeenAt:  now,
-        }
+		record := PeerRecord{
+			Peer:        clonePeer(peer),
+			FirstSeenAt: now,
+			LastSeenAt:  now,
+		}
 
-        if previous, exists := m.peers[peer.Id]; exists {
-            record.FirstSeenAt = previous.FirstSeenAt
-        }
+		if previous, exists := m.peers[peer.Id]; exists {
+			record.FirstSeenAt = previous.FirstSeenAt
+		}
 
-        peers[peer.Id] = record
-    }
+		peers[peer.Id] = record
+	}
 
-    m.mu.Lock()
-    m.peers = peers
-    m.mu.Unlock()
+	m.mu.Lock()
+	m.peers = peers
+	m.mu.Unlock()
 }
 
 func clonePeerRecord(record PeerRecord) PeerRecord {
@@ -163,8 +163,8 @@ func NewPeerManager(nodeID metadata.PeerId, discovery Discovery) (*PeerManager, 
 	}
 
 	return &PeerManager{
-		nodeId:            nodeID,
-		discovery:         discovery,
-		peers:             make(map[metadata.PeerId]PeerRecord),
+		nodeId:    nodeID,
+		discovery: discovery,
+		peers:     make(map[metadata.PeerId]PeerRecord),
 	}, nil
 }

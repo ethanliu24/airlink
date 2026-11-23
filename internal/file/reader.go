@@ -38,11 +38,11 @@ func (fr *FileReader) Stat() (os.FileInfo, error) {
 }
 
 func (fr *FileReader) Seek(offset int64, whence int) (int64, error) {
-    if fr.file == nil {
-        return 0, FileIsNullError
-    }
+	if fr.file == nil {
+		return 0, FileIsNullError
+	}
 
-    return fr.file.Seek(offset, whence)
+	return fr.file.Seek(offset, whence)
 }
 
 type OpenReaderFunc func(path string) (Reader, error)
