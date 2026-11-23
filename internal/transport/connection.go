@@ -20,7 +20,6 @@ import (
 // TODO centralize and figure it out properly
 const (
 	maxHandshakeTimeoutSeconds = 3 * time.Second
-	maxPeerIDLength = 36
 
 	protocolVersion = uint32(1)
 )
@@ -79,7 +78,7 @@ func exchangePeerIdentity(
 		return nil, fmt.Errorf("peer identity exchange: invalid remote peer ID")
 	}
 
-	if len(remotePeerId) > maxPeerIDLength {
+	if len(remotePeerId) > metadata.MaxPeerIDLength {
 		return nil, fmt.Errorf("peer identity exchange: remote peer ID too long")
 	}
 

@@ -1,6 +1,7 @@
 package security
 
 import (
+	"airlink/internal/metadata"
 	"crypto/sha256"
 	"crypto/x509"
 	"strings"
@@ -62,7 +63,7 @@ func TestNewPeerIdentity_InvalidInput(t *testing.T) {
 		},
 		{
 			name:        "peer ID too long",
-			peerID:      strings.Repeat("a", maxPeerIDLength+1),
+			peerID:      strings.Repeat("a", metadata.MaxPeerIDLength+1),
 			certificate: cert,
 		},
 	}

@@ -178,7 +178,7 @@ func TestExchangePeerIdentity_InvalidResponse(t *testing.T) {
 		},
 		{
 			name:    "peer ID too long",
-			peerID:  strings.Repeat("a", maxPeerIDLength+1),
+			peerID:  strings.Repeat("a", metadata.MaxPeerIDLength+1),
 			version: protocolVersion,
 		},
 		{
