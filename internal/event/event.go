@@ -44,7 +44,7 @@ func NewEvent(name string, payload any) (Event, error) {
 	}
 
 	return &event{
-		name: name,
+		name:    name,
 		payload: payload,
 	}, nil
 }

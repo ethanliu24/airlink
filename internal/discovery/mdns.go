@@ -134,23 +134,23 @@ func mdnsTXTValue(fields []string, key string) (string, bool) {
 }
 
 func isAirlinkServiceEntry(name string) bool {
-    name = strings.TrimSuffix(
-        strings.ToLower(strings.TrimSpace(name)),
-        ".",
-    )
+	name = strings.TrimSuffix(
+		strings.ToLower(strings.TrimSpace(name)),
+		".",
+	)
 
-    serviceSuffix := "." +
-        strings.TrimSuffix(strings.ToLower(MDNSServiceName), ".") +
-        "." +
-        strings.TrimSuffix(strings.ToLower(MDNSDomainName), ".")
+	serviceSuffix := "." +
+		strings.TrimSuffix(strings.ToLower(MDNSServiceName), ".") +
+		"." +
+		strings.TrimSuffix(strings.ToLower(MDNSDomainName), ".")
 
-    return strings.HasSuffix(name, serviceSuffix)
+	return strings.HasSuffix(name, serviceSuffix)
 }
 
 func mdnsEntryToPeer(entry *MDNSServiceEntry) (*Peer, bool) {
 	if entry == nil || !isAirlinkServiceEntry(entry.Name) {
-        return nil, false
-    }
+		return nil, false
+	}
 
 	name, ok := mdnsTXTValue(entry.InfoFields, MDNSPeerNameTXTKey)
 	if !ok || strings.TrimSpace(name) == "" {

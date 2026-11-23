@@ -18,7 +18,7 @@ func TestEventPayloadExtensibility(t *testing.T) {
 		id := 123
 		payload := &testPayload{id: id}
 		event := &event{
-			name: "test",
+			name:    "test",
 			payload: payload,
 		}
 
@@ -34,7 +34,7 @@ func TestEventPayloadExtensibility(t *testing.T) {
 	t.Run("allows primitive data payloads", func(t *testing.T) {
 		payload := 123
 		event := &event{
-			name: "test",
+			name:    "test",
 			payload: payload,
 		}
 

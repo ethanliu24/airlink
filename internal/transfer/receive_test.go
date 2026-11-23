@@ -176,12 +176,12 @@ func newReceiveTestTransferWithContext(
 
 func newValidReceiveRequest() *models.TransferRequest {
 	return &models.TransferRequest{
-		Id: "request-123",
-		Filename: "hello.txt",
+		Id:        "request-123",
+		Filename:  "hello.txt",
 		Extension: ".txt",
-		FileSize: 5,
-		Mime: "text/plain",
-		SenderIp: "192.0.2.10",
+		FileSize:  5,
+		Mime:      "text/plain",
+		SenderIp:  "192.0.2.10",
 	}
 }
 
@@ -620,15 +620,15 @@ func TestReceiveProcessResponse(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
+		name     string
 		accepted bool
 	}{
 		{
-			name: "accepted",
+			name:     "accepted",
 			accepted: true,
 		},
 		{
-			name: "rejected",
+			name:     "rejected",
 			accepted: false,
 		},
 	}
@@ -649,9 +649,9 @@ func TestReceiveProcessResponse(t *testing.T) {
 			}
 
 			type responseResult struct {
-				response *models.TransferResponse
+				response        *models.TransferResponse
 				destinationPath string
-				err error
+				err             error
 			}
 
 			resultCh := make(chan responseResult, 1)
@@ -660,9 +660,9 @@ func TestReceiveProcessResponse(t *testing.T) {
 				response, path, err := transfer.processResponse()
 
 				resultCh <- responseResult{
-					response: response,
+					response:        response,
 					destinationPath: path,
-					err: err,
+					err:             err,
 				}
 			}()
 
@@ -1023,7 +1023,7 @@ func TestReceiveSendResponse(t *testing.T) {
 		transfer := newReceiveTestTransfer(stream)
 		transfer.state = receiveRespond
 		transfer.response = &models.TransferResponse{
-			Id: "request-123",
+			Id:       "request-123",
 			Accepted: true,
 		}
 
@@ -1579,72 +1579,72 @@ func TestReceiveData(t *testing.T) {
 }
 
 func TestRequestDuplicatedFileHandling(t *testing.T) {
-    t.Parallel()
+	t.Parallel()
 
-    t.Run("returns error when destination is empty", func(t *testing.T) {
-        t.Parallel()
+	t.Run("returns error when destination is empty", func(t *testing.T) {
+		t.Parallel()
 
-        stream, _, _ := newReceiveTestStream(nil, nil)
-        transfer := newReceiveTestTransfer(stream)
+		stream, _, _ := newReceiveTestStream(nil, nil)
+		transfer := newReceiveTestTransfer(stream)
 
-        err := transfer.requestDuplicatedFileHandling("")
+		err := transfer.requestDuplicatedFileHandling("")
 
-        require.Error(t, err)
-        assert.Contains(t, err.Error(), "destination path is empty")
-    })
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "destination path is empty")
+	})
 
-    t.Run("emits duplicate file handling event", func(t *testing.T) {
-        t.Parallel()
+	t.Run("emits duplicate file handling event", func(t *testing.T) {
+		t.Parallel()
 
-        stream, _, _ := newReceiveTestStream(nil, nil)
-        transfer := newReceiveTestTransfer(stream)
-        transfer.setId("test-transfer-id")
+		stream, _, _ := newReceiveTestStream(nil, nil)
+		transfer := newReceiveTestTransfer(stream)
+		transfer.setId("test-transfer-id")
 
-        err := transfer.requestDuplicatedFileHandling("test/hello.txt")
+		err := transfer.requestDuplicatedFileHandling("test/hello.txt")
 
-        require.NoError(t, err)
-    })
+		require.NoError(t, err)
+	})
 }
 
 func TestDuplicatedFileHandlingDecision(t *testing.T) {
-    t.Parallel()
+	t.Parallel()
 
-    t.Run("submits decision and closes channel", func(t *testing.T) {
-        t.Parallel()
+	t.Run("submits decision and closes channel", func(t *testing.T) {
+		t.Parallel()
 
-        stream, _, _ := newReceiveTestStream(nil, nil)
-        transfer := newReceiveTestTransfer(stream)
-        transfer.handleDupDestination = make(chan file.WriterCommitMode, 1)
+		stream, _, _ := newReceiveTestStream(nil, nil)
+		transfer := newReceiveTestTransfer(stream)
+		transfer.handleDupDestination = make(chan file.WriterCommitMode, 1)
 
-        transfer.duplicatedFileHandlingDecision(file.WriteCommitReplace)
+		transfer.duplicatedFileHandlingDecision(file.WriteCommitReplace)
 
-        mode, ok := <-transfer.handleDupDestination
+		mode, ok := <-transfer.handleDupDestination
 
-        require.True(t, ok)
-        assert.Equal(t, file.WriteCommitReplace, mode)
+		require.True(t, ok)
+		assert.Equal(t, file.WriteCommitReplace, mode)
 
-        _, ok = <-transfer.handleDupDestination
-        assert.False(t, ok)
-    })
+		_, ok = <-transfer.handleDupDestination
+		assert.False(t, ok)
+	})
 
-    t.Run("only accepts first decision", func(t *testing.T) {
-        t.Parallel()
+	t.Run("only accepts first decision", func(t *testing.T) {
+		t.Parallel()
 
-        stream, _, _ := newReceiveTestStream(nil, nil)
-        transfer := newReceiveTestTransfer(stream)
-        transfer.handleDupDestination = make(chan file.WriterCommitMode, 1)
+		stream, _, _ := newReceiveTestStream(nil, nil)
+		transfer := newReceiveTestTransfer(stream)
+		transfer.handleDupDestination = make(chan file.WriterCommitMode, 1)
 
-        transfer.duplicatedFileHandlingDecision(file.WriteCommitReplace)
-        transfer.duplicatedFileHandlingDecision(file.WriteCommitRaise)
+		transfer.duplicatedFileHandlingDecision(file.WriteCommitReplace)
+		transfer.duplicatedFileHandlingDecision(file.WriteCommitRaise)
 
-        mode, ok := <-transfer.handleDupDestination
+		mode, ok := <-transfer.handleDupDestination
 
-        require.True(t, ok)
-        assert.Equal(t, file.WriteCommitReplace, mode)
+		require.True(t, ok)
+		assert.Equal(t, file.WriteCommitReplace, mode)
 
-        _, ok = <-transfer.handleDupDestination
-        assert.False(t, ok)
-    })
+		_, ok = <-transfer.handleDupDestination
+		assert.False(t, ok)
+	})
 }
 
 func TestReceiveRun(t *testing.T) {
@@ -1655,7 +1655,7 @@ func TestReceiveRun(t *testing.T) {
 
 		const (
 			transferID = TransferId("transfer-123")
-			fileData = "hello"
+			fileData   = "hello"
 		)
 
 		request := newValidReceiveRequest()

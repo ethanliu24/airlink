@@ -116,14 +116,14 @@ func eventHandler(node *node.P2PNode) event.EventHandlerFunc {
 }
 
 func startSender(p2pNode *node.P2PNode) {
-    p2pNode.StartPeerDiscovery(1 * time.Second)
+	p2pNode.StartPeerDiscovery(1 * time.Second)
 	defer p2pNode.StopPeerDiscovery()
 
-    go func() {
+	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 
-        fmt.Println("Peers: ")
+		fmt.Println("Peers: ")
 		for range ticker.C {
 			for _, record := range p2pNode.GetPeers() {
 				peer := record.Peer
@@ -136,7 +136,7 @@ func startSender(p2pNode *node.P2PNode) {
 				)
 			}
 		}
-    }()
+	}()
 
 	for {
 		printToTerminal("Enter file path: ")
